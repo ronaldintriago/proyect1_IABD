@@ -1,0 +1,13 @@
+[project]
+name = "proyect1-iabd"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.13"
+dependencies = [
+    "pandas>=2.3.3",
+    "plotly>=6.5.0",
+    "pyodbc>=5.3.0",
+    "sqlalchemy>=2.0.44",
+    "streamlit>=1.51.0",
+]
