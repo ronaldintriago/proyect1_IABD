@@ -77,8 +77,8 @@ def procesar_datos(clientes, destinos, lineas, pedidos, productos, provincias):
         'nombre_completo', 'Nombre_Provincia', 'pais' # 'nombre_completo' es el destino
     ]
     # Renombramos la columna 'Nombre' del producto a 'Producto' para mayor claridad
-    master_df = master_df.rename(columns={'Nombre': 'Producto', 'nombre_completo': 'Destino'})
-    vista_final = master_df[['PedidoID', 'FechaPedido', 'Nombre_Cliente', 'Producto', 'Cantidad', 'Total_Linea', 'Destino', 'Nombre_Provincia']]
+    master_df = master_df.rename(columns={'Nombre': 'Producto', 'nombre_completo': 'Destino', 'distancia_km': 'Distancia_Km'})
+    vista_final = master_df[['PedidoID', 'FechaPedido', 'Nombre_Cliente', 'Producto', 'Cantidad', 'Total_Linea', 'Destino', 'Nombre_Provincia', 'Distancia_Km']]
     return vista_final
 
 # --- MAIN (PUNTO DE ENTRADA) ---
