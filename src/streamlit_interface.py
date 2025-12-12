@@ -2,6 +2,7 @@ import streamlit as st
 import pandas as pd
 import plotly.express as px
 from sqlalchemy import create_engine
+from data.clean_data import DataCleaner
 
 # --- CONFIGURACIÓN DE PÁGINA ---
 st.set_page_config(page_title="Dashboard SQL Server", layout="wide")
@@ -37,12 +38,12 @@ def cargar_datos_sql():
         df_productos = pd.read_sql("SELECT * FROM BDIADelivery.dbo.Productos", engine)
         df_provincias = pd.read_sql("SELECT * FROM BDIADelivery.dbo.Provincias", engine)
 
-        df_pedidos['FechaPedido'] = pd.to_datetime(df_pedidos['FechaPedido'])
+        # Aplicar limpieza robusta
+        df_clientes, df_destinos, df_lineas, df_pedidos, df_productos, df_provincias = (
+            DataCleaner.clean_full_dataset(df_clientes, df_destinos, df_lineas, df_pedidos, df_productos, df_provincias)
+        )
 
         return df_clientes, df_destinos, df_lineas, df_pedidos, df_productos, df_provincias
-    
-        clientes, destinos, lineas, pedidos, productos, provincias = cargar_datos()
-        st.success("✅ Datos cargados y tablas correlacionadas correctamente.")
 
     except Exception as e:
         st.error(f"❌ Error conectando a la base de datos: {e}")
@@ -122,7 +123,12 @@ def streamlit_interface():
         col1, col2, col3, col4 = st.columns(4)
         total_ventas = df_filtrado['Total_Linea'].sum()
         total_pedidos = df_filtrado['PedidoID'].nunique()
-        top_cliente = df_filtrado.groupby('Nombre_Cliente')['Total_Linea'].sum().idxmax()
+        
+        # Proteger contra DataFrame vacío
+        if len(df_filtrado) > 0 and df_filtrado['Nombre_Cliente'].nunique() > 0:
+            top_cliente = df_filtrado.groupby('Nombre_Cliente')['Total_Linea'].sum().idxmax()
+        else:
+            top_cliente = "N/A"
         
         col1.metric("Ventas Totales", f"{total_ventas:,.2f}€")
         col2.metric("Total Pedidos", total_pedidos)
