@@ -2,7 +2,7 @@ import streamlit as st
 import pandas as pd
 import plotly.express as px
 from sqlalchemy import create_engine
-from data.clean_data import DataCleaner
+from src.data.clean_data import DataCleaner
 
 # --- CONFIGURACIÓN DE PÁGINA ---
 st.set_page_config(page_title="Dashboard SQL Server", layout="wide")
