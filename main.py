@@ -1,4 +1,4 @@
-from src.streamlit_interface import streamlit_interface
+from src.ui.streamlit_interface import streamlit_interface
 
 def main():
     streamlit_interface()

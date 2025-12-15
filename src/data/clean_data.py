@@ -184,7 +184,7 @@ class DataCleaner:
         removed_count = initial_count - len(df_clean)
         
         if removed_count > 0:
-            logger.info(f"ℹ️  {removed_count} filas duplicadas eliminadas.")
+            logger.info(f"ℹ  {removed_count} filas duplicadas eliminadas.")
         
         return df_clean
 
@@ -204,7 +204,7 @@ class DataCleaner:
             Tupla con los DataFrames limpios: (clientes, destinos, lineas, pedidos, productos, provincias)
         """
         logger.info("=" * 60)
-        logger.info("🧹 INICIANDO LIMPIEZA COMPLETA DE DATOS")
+        logger.info("INICIANDO LIMPIEZA COMPLETA DE DATOS")
         logger.info("=" * 60)
         
         # 1. Limpiar espacios en blanco
