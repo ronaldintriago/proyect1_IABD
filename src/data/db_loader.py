@@ -25,7 +25,8 @@ class DataLoader:
             lineas = pd.read_sql("SELECT * FROM BDIADelivery.dbo.LineasPedido", engine)
             pedidos = pd.read_sql("SELECT * FROM BDIADelivery.dbo.Pedidos", engine)
             productos = pd.read_sql("SELECT * FROM BDIADelivery.dbo.Productos", engine)
-            provincias = pd.read_sql("SELECT * FROM BDIADelivery.dbo.Provincias", engine)
+            #provincias = pd.read_sql("SELECT * FROM BDIADelivery.dbo.Provincias", engine)
+            provincias = pd.read_csv('provincias_geo.py')
 
             # Usamos tu clase DataCleaner original
             logger.info("Ejecutando limpieza de datos...")

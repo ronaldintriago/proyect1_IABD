@@ -87,8 +87,7 @@ def streamlit_interface():
         with st.spinner("Cargando datos desde SQL Server..."):
             df_vista, raw_tables = cargar_datos_cache()
             # Desempaquetamos las tablas crudas para la Pestaña 3
-            provincias = pd.read_csv('src/data/provincias_geo.csv')
-            clientes, destinos, lineas, pedidos, productos = raw_tables
+            clientes, destinos, lineas, pedidos, productos, provincias = raw_tables
 
     except Exception as e:
         st.error(f"❌ Error de conexión: {e}")
