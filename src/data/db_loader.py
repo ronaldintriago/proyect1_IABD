@@ -26,7 +26,11 @@ class DataLoader:
             pedidos = pd.read_sql("SELECT * FROM BDIADelivery.dbo.Pedidos", engine)
             productos = pd.read_sql("SELECT * FROM BDIADelivery.dbo.Productos", engine)
             #provincias = pd.read_sql("SELECT * FROM BDIADelivery.dbo.Provincias", engine)
-            provincias = pd.read_csv('provincias_geo.py')
+            provincias = pd.read_csv(
+                'src/data/provincias_geo.csv',
+                dtype={'ProvinciaID': 'int64'}
+            )
+
 
             # Usamos tu clase DataCleaner original
             logger.info("Ejecutando limpieza de datos...")
@@ -60,6 +64,11 @@ class DataLoader:
         # Merge 4: + Destinos
         df = pd.merge(df, destinos, left_on="DestinoEntregaID", right_on="DestinoID", how="left")
         
+        df['provinciaID'] = (
+            df['provinciaID']
+            .astype('Int64')  # permite NaN
+        )
+
         # Merge 5: + Provincias
         provincias = provincias.rename(columns={'nombre': 'Nombre_Provincia'})
         df = pd.merge(df, provincias, left_on="provinciaID", right_on="ProvinciaID", how="left")
@@ -76,7 +85,7 @@ class DataLoader:
         
         # Selección de columnas finales
         cols = ['PedidoID', 'FechaPedido', 'Nombre_Cliente', 'Producto', 
-                'Cantidad', 'PrecioVenta', 'Total_Linea', 'Destino', 
+                'Cantidad', 'PrecioVenta', 'Total_Linea', 'Destino', 'Latitud', 'Longitud'
                 'Nombre_Provincia', 'Distancia_Km', 'email']
         
         # Filtrar solo columnas existentes (por seguridad)
