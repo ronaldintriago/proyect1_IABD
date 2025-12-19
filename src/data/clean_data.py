@@ -245,4 +245,5 @@ class DataCleaner:
         logger.info("✅ LIMPIEZA COMPLETADA EXITOSAMENTE")
         logger.info("=" * 60 + "\n")
         
+        
         return clientes, destinos, lineas, pedidos, productos, provincias
