@@ -5,6 +5,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import sys
 import os
+from src.controllers.main_controller import LogisticsController
 
 # Ajuste de path para importar módulos desde src
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..')))
