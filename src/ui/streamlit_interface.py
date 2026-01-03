@@ -5,6 +5,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import sys
 import os
+from src.controllers.main_controller import LogisticsController
 
 # Ajuste de path para importar módulos desde src
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..')))
@@ -85,8 +86,10 @@ def streamlit_interface():
     # --- 1. CARGA DE DATOS ---
     with st.spinner("Cargando dataset..."):
         # Cargar y limpiar tablas crudas
-        clientes, destinos, lineas, pedidos, productos, provincias = DataLoader.load_data()
-
+        # Cambiar de online a offline
+        #clientes, destinos, lineas, pedidos, productos, provincias = DataLoader.load_and_clean_data()
+        clientes, destinos, lineas, pedidos, productos, provincias = DataLoader.get_data_from_csv_files()
+        
         # Construir diccionario para FeatureEngineer
         dataframes = {
             'clientes': clientes,

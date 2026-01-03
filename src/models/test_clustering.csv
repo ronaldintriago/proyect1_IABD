@@ -1,0 +1,7 @@
+id,nombre,lat,lon,cantidad,deadline_minutos
+0,CENTRAL_MATARO,41.5381,2.4447,0,9999
+1,Cliente_Granollers,41.6032,2.2860,150,120
+2,Cliente_Badalona,41.4500,2.2474,200,180
+3,Cliente_Sabadell,41.5463,2.1086,100,240
+4,Cliente_Barcelona,41.3851,2.1734,300,300
+5,Cliente_Girona,41.9794,2.8214,150,400
