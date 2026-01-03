@@ -3,7 +3,7 @@
 import pandas as pd
 from src.data.db_loader import DataLoader
 from src.models.routing import RouteSolver
-# from src.models.clustering import ClusterEngine 
+from src.models.clustering_service import ClusteringService
 from src.config.fleet_config import FLEET_CONFIG
 
 # Configuración de Flota 
@@ -14,18 +14,39 @@ class LogisticsController:
     @staticmethod
     def ejecutar_calculo_diario(flota_usuario):
         """
-        flota_usuario: Diccionario con cuántos vehículos hay de cada tipo.
-                       Ej: {1: 2, 2: 5, ...} (2 Furgonetas Eco, 5 Std...)
-        """
-        # 1. CARGAR DATOS 
-        # Recibimos la tupla, pero solo nos interesan los Pedidos y Destinos procesados
-        #TODO cambair direccion de fichero
-        df_vista_maestra, _ = DataLoader.get_data_from_csv_files("data/csv_files")
+        Orquesta todo el proceso: Datos -> Clustering -> Routing.
         
-        # 2. CLUSTERING (El trabajo de tu compañero)
-        # Le pasas todos los pedidos y la flota disponible.
-        # Él te devuelve el DF con la columna 'ClusterID' y 'TipoVehiculoID'
-        # df_clustered = ClusterEngine.asignar_pedidos(df_vista_maestra, flota_usuario)
+        Args:
+            flota_usuario (dict): {vehiculo_id: cantidad}. Ej: {1: 2, 3: 1}
+        """
+        print("\n" + "="*60)
+        print("🚀 INICIANDO EJECUCIÓN DEL CONTROLADOR PRINCIPAL")
+        print("="*60)
+
+        # ------------------------------------------------------
+        # PASO 1: CARGAR DATOS (ETL)
+        # ------------------------------------------------------
+        print("📂 1. Cargando datos maestros...")
+        df_vista_maestra = DataLoader.load_all_data() 
+        
+        if df_vista_maestra is None or df_vista_maestra.empty:
+            return {"error": "No se pudieron cargar los datos."}       
+        # ------------------------------------------------------
+        # PASO 2: CLUSTERING (TU PARTE)
+        # ------------------------------------------------------
+        print("🤖 2. Ejecutando Clustering (Asignación de Flota)...")
+        
+        # Instanciamos tu servicio
+        cluster_service = ClusteringService(df_vista_maestra)
+        
+        # A. Ejecutamos con la flota REAL del usuario
+        # Esto devuelve los pedidos que SÍ caben (accepted) y los que NO (discarded)
+        df_accepted, df_discarded, user_cost, user_routes_details = cluster_service.run_user_fleet_clustering(flota_usuario)
+        
+        # B. Ejecutamos la comparativa IDEAL (para el reporte final)
+        ideal_routes_details, ideal_cost = cluster_service.run_optimal_clustering()
+        
+        print(f"   ✅ Clustering finalizado. Pedidos aceptados para ruta: {len(df_accepted)}")
         
         # --- MOCK TEMPORAL (Simulamos que tu compañero ya hizo su trabajo) ---
         # Esto lo borras cuando él te pase su código
