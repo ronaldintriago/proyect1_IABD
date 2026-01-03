@@ -158,8 +158,31 @@ class FeatureEngineer:
         filled = df_maestro['coordenadas'].notna().sum()
         logger.info("Coordenadas asignadas en df_maestro: %d/%d", filled, len(df_maestro))
 
-        # Ensure 'coordenadas' is in the returned columns
-        if 'coordenadas' not in cols_presentes:
-            cols_presentes.append('coordenadas')
+        # Separar coordenadas en Latitud y Longitud
+        def get_lat(c):
+            try:
+                return float(c[0])
+            except Exception:
+                return None
+
+        def get_lon(c):
+            try:
+                return float(c[1])
+            except Exception:
+                return None
+
+        df_maestro['Latitud'] = df_maestro['coordenadas'].apply(get_lat)
+        df_maestro['Longitud'] = df_maestro['coordenadas'].apply(get_lon)
+
+        lat_filled = df_maestro['Latitud'].notna().sum()
+        lon_filled = df_maestro['Longitud'].notna().sum()
+        logger.info("Latitud/Longitud asignadas en df_maestro: %d/%d, %d/%d", lat_filled, len(df_maestro), lon_filled, len(df_maestro))
+
+        # No devolver la columna tupla 'coordenadas'; asegurar Latitud/Longitud en la salida
+        if 'coordenadas' in cols_presentes:
+            cols_presentes.remove('coordenadas')
+        for c in ['Latitud', 'Longitud']:
+            if c not in cols_presentes:
+                cols_presentes.append(c)
 
         return df_maestro[cols_presentes]
