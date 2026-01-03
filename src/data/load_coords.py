@@ -132,7 +132,7 @@ def add_coordinates_to_destinos(destinos_df: pd.DataFrame, provincias_df: pd.Dat
 
 def enrich_destinos_with_coords(csv_cache='src/data/provincias_geo.csv') -> pd.DataFrame:
     """Carga datos limpios desde `DataLoader`, asegura coordenadas y devuelve `destinos` enriquecido."""
-    clientes, destinos, lineas, pedidos, productos, provincias = DataLoader.load_and_clean_data()
+    clientes, destinos, lineas, pedidos, productos, provincias = DataLoader.load_data()
 
     provincias_geo = ensure_provincias_geo(provincias, csv_path=csv_cache)
     destinos_with_coords = add_coordinates_to_destinos(destinos, provincias_geo)
