@@ -28,7 +28,7 @@ class DataLoader:
             productos = pd.read_sql("SELECT * FROM BDIADelivery.dbo.Productos", engine)
             #provincias = pd.read_sql("SELECT * FROM BDIADelivery.dbo.Provincias", engine)
             provincias = pd.read_csv(
-                'src/data/datasets/provincias_geo.csv',
+                'data/raw/provincias_geo.csv',
                 dtype={'ProvinciaID': 'int64'}
             )
 
@@ -42,7 +42,7 @@ class DataLoader:
             raise e
         
     @staticmethod
-    def get_data_from_csv_files(csv_folder_path="src/data/datasets/bbdd_local"):
+    def get_data_from_csv_files(csv_folder_path="data/raw"):
         """
         Carga los datos desde archivos CSV locales simulando la extracción de SQL.
         Busca archivos que comiencen con el nombre de la tabla (para ignorar fechas en el nombre).

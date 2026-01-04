@@ -3,5 +3,5 @@ __pycache__/
 
 #IDE
 .idea
-src/data/processed/dataset_clustered.csv
-src/data/processed/pedidos_descartados.csv
+data/processed/dataset_clustered.csv
+data/processed/pedidos_descartados.csv
