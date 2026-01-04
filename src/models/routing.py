@@ -1,11 +1,14 @@
-import pulp
 import pandas as pd
 import numpy as np
 from math import radians, cos, sin, asin, sqrt
+from datetime import datetime, timedelta
 
 class RouteSolver:
-    def __init__(self, df_pedidos, vehicle_speed_kmh=50, max_hours=8):
-        # 1. Normalización de Nombres
+    def __init__(self, df_pedidos, vehicle_speed_kmh=50, max_hours=None, start_date_str=None):
+        """
+        start_date_str: Fecha de inicio de la simulación.
+        """
+        # 1. Normalización
         self.points = df_pedidos.copy()
         
         column_mapping = {
@@ -13,31 +16,51 @@ class RouteSolver:
             'Latitud': 'lat',
             'Longitud': 'lon',
             'vehiculo_nombre': 'nombre',
-            'Fecha_Limite_Entrega': 'deadline_date'
+            'Fecha_Limite_Entrega': 'deadline_str'
         }
         self.points.rename(columns=column_mapping, inplace=True)
 
-        # 2. Gestión de Deadlines
-        self.max_minutes = max_hours * 60
-        if 'deadline_minutos' not in self.points.columns:
-            self.points['deadline_minutos'] = self.max_minutes
-
-        # Asegurar IDs y Nombres
-        if 'id' not in self.points.columns:
-             self.points['id'] = self.points.index 
-        if 'nombre' not in self.points.columns:
-            self.points['nombre'] = "Cliente_" + self.points['id'].astype(str)
-
-        # 3. Configuración Física
+        # 2. Configuración Física
         self.n_points = len(self.points)
-        self.nodes = range(self.n_points)
         self.speed_km_min = vehicle_speed_kmh / 60.0 
+
+        # 3. GESTIÓN DE FECHA DE INICIO
+        if start_date_str:
+            try:
+                base_date = pd.to_datetime(start_date_str)
+                self.start_time = base_date.replace(hour=8, minute=0, second=0, microsecond=0)
+            except:
+                print(f"⚠️ Formato de fecha inválido ({start_date_str}). Usando HOY.")
+                self.start_time = datetime.now().replace(hour=8, minute=0, second=0, microsecond=0)
+        else:
+            self.start_time = datetime.now().replace(hour=8, minute=0, second=0, microsecond=0)
+
+        # Calcular minutos de deadline relativos
+        self.points['deadline_minutos'] = self.points.apply(self._calculate_deadline_minutes, axis=1)
+
+        # Asegurar IDs
+        if 'id' not in self.points.columns: self.points['id'] = self.points.index 
+        if 'nombre' not in self.points.columns: self.points['nombre'] = "Cliente_" + self.points['id'].astype(str)
         
         # 4. Matrices
         if self.n_points > 0:
             self.dist_matrix, self.time_matrix = self._calculate_matrices()
         else:
             self.dist_matrix, self.time_matrix = [], []
+
+    def _calculate_deadline_minutes(self, row):
+        try:
+            if str(row.get('id')) == "0" or row.get('nombre') == "CENTRAL":
+                return 99999999
+
+            deadline_str = row['deadline_str']
+            dt_obj = pd.to_datetime(deadline_str)
+            
+            delta = dt_obj - self.start_time
+            minutes = delta.total_seconds() / 60.0
+            return minutes
+        except:
+            return 99999999
 
     def _haversine(self, lat1, lon1, lat2, lon2):
         R = 6371
@@ -66,142 +89,72 @@ class RouteSolver:
 
     def solve(self):
         """
-        Método inteligente que decide qué algoritmo usar según el tamaño del problema.
+        Retorna: (lista_ruta, lista_backlog_ids)
         """
-        # Safety Check
-        if self.n_points <= 1: return []
+        if self.n_points <= 1: 
+            return [], []
+        return self._solve_long_haul_tachograph()
 
-        # UMBRAL DE DECISIÓN:
-        # - Menos de 16 puntos: Usamos MATEMÁTICAS EXACTAS (PuLP). Es lento pero perfecto.
-        # - Más de 16 puntos: Usamos HEURÍSTICA (Vecino Más Cercano). Es instantáneo.
-        if self.n_points < 16:
-            return self._solve_exact_pulp()
-        else:
-            return self._solve_heuristic_nearest_neighbor()
-
-    def _solve_exact_pulp(self):
-        """
-        Solver Exacto (MILP) usando PuLP.
-        """
-        prob = pulp.LpProblem("VRP_Routing", pulp.LpMinimize)
-        x = pulp.LpVariable.dicts("x", (self.nodes, self.nodes), cat='Binary')
-        t = pulp.LpVariable.dicts("t", self.nodes, lowBound=0, upBound=self.max_minutes)
-        
-        prob += t[0] == 0 # Inicio
-
-        # Función Objetivo
-        prob += pulp.lpSum([self.dist_matrix[i][j] * x[i][j] 
-                            for i in self.nodes for j in self.nodes if i != j])
-
-        # Restricciones de flujo
-        for i in range(1, self.n_points): 
-            prob += pulp.lpSum([x[j][i] for j in self.nodes if i != j]) == 1
-            prob += pulp.lpSum([x[i][j] for j in self.nodes if i != j]) == 1
-
-        prob += pulp.lpSum([x[0][j] for j in range(1, self.n_points)]) == 1
-        prob += pulp.lpSum([x[i][0] for i in range(1, self.n_points)]) == 1
-
-        # MTZ (Tiempo)
-        M = 10000 
-        for i in self.nodes:
-            for j in range(1, self.n_points):
-                if i != j:
-                    prob += t[j] >= t[i] + 10 + self.time_matrix[i][j] - M*(1-x[i][j])
-
-        # Ventanas de tiempo
-        for i in range(1, self.n_points):
-            deadline = self.points.iloc[i]['deadline_minutos']
-            prob += t[i] <= deadline
-
-        # LIMITAMOS A 30 SEGUNDOS POR SI ACASO
-        prob.solve(pulp.PULP_CBC_CMD(msg=False, timeLimit=30))
-
-        if pulp.LpStatus[prob.status] in ['Optimal', 'Feasible']:
-            return self._reconstruct_route(x)
-        else:
-            return None
-
-    def _solve_heuristic_nearest_neighbor(self):
-        """
-        Algoritmo Voraz (Greedy): "Ve al cliente más cercano que aún no has visitado".
-        Es O(N^2) en vez de O(N!), es decir, tarda 0.01 segundos en vez de 20 minutos.
-        """
+    def _solve_long_haul_tachograph(self):
+        current_node = 0
         visited = [False] * self.n_points
-        route_indices = [0] # Empezamos en depósito
         visited[0] = True
         
-        current_node = 0
-        current_time = 0
+        # Relojes
+        accumulated_driving_time = 0 
+        total_mission_time = 0       
         
         # Mapeo inverso ID
-        if 'id' in self.points.columns:
-             real_depot_id = self.points.iloc[0]['id']
-        else:
-             real_depot_id = 0
+        node_to_real_id = self.points['id'].to_dict()
+        if 'id' in self.points.columns: real_depot_id = self.points.iloc[0]['id']
+        else: real_depot_id = 0
         
         final_route_ids = [real_depot_id]
-        node_to_real_id = self.points['id'].to_dict()
 
-        # Bucle principal: buscar el siguiente más cercano
         for _ in range(self.n_points - 1):
             best_next_node = -1
             min_dist = float('inf')
             
             for j in range(1, self.n_points):
                 if not visited[j]:
-                    dist = self.dist_matrix[current_node][j]
-                    travel_time = self.time_matrix[current_node][j]
-                    arrival_time = current_time + travel_time + 10 # +10 min servicio
+                    dist_km = self.dist_matrix[current_node][j]
+                    driving_minutes = self.time_matrix[current_node][j]
+                    
+                    sim_driving = accumulated_driving_time + driving_minutes
+                    sim_total = total_mission_time + driving_minutes + 10 
+                    
+                    # Regla Tacógrafo
+                    if sim_driving > 480: 
+                        sim_total += 720 # +12h descanso
+                        sim_driving = driving_minutes 
+                    
+                    # Regla Caducidad
                     deadline = self.points.iloc[j]['deadline_minutos']
                     
-                    # Criterio: Más cercano Y que cumpla horario
-                    if dist < min_dist and arrival_time <= deadline:
-                        min_dist = dist
-                        best_next_node = j
+                    if sim_total <= deadline:
+                        if dist_km < min_dist:
+                            min_dist = dist_km
+                            best_next_node = j
+                            next_accum_driving = sim_driving
+                            next_total_time = sim_total
             
             if best_next_node != -1:
-                # Nos movemos
                 visited[best_next_node] = True
-                route_indices.append(best_next_node)
-                
-                # Actualizamos reloj
-                travel = self.time_matrix[current_node][best_next_node]
-                current_time += travel + 10
-                current_node = best_next_node
-                
-                # Guardamos ID real
                 final_route_ids.append(node_to_real_id[best_next_node])
+                current_node = best_next_node
+                accumulated_driving_time = next_accum_driving
+                total_mission_time = next_total_time
             else:
-                # No encontramos ningún nodo válido (todos llegan tarde o ya visitados)
-                # En heurística simple, terminamos la ruta aquí o saltamos
-                # Para simplificar, cerramos ruta y devolvemos lo que tengamos
+                # No podemos llegar a nadie más a tiempo
                 break
         
-        # Vuelta a casa
         final_route_ids.append(real_depot_id)
-        
-        # Si nos hemos dejado clientes sin visitar, la heurística falla parcialmente,
-        # pero devuelve una ruta válida.
-        return final_route_ids
 
-    def _reconstruct_route(self, x):
-        # (Este método es igual que antes, solo para PuLP)
-        if 'id' in self.points.columns:
-             real_depot_id = self.points.iloc[0]['id']
-        else:
-             real_depot_id = 0
-        route_ids = [real_depot_id]
-        node_to_real_id = self.points['id'].to_dict()
-        curr = 0
-        while True:
-            next_node = None
-            for j in self.nodes:
-                if curr != j and pulp.value(x[curr][j]) == 1:
-                    next_node = j; break
-            if next_node is None: break
-            if next_node != 0:
-                route_ids.append(node_to_real_id[next_node])
-                curr = next_node
-            else:
-                route_ids.append(real_depot_id); break
-        return route_ids
+        # --- DETECTAR QUIÉN SE QUEDÓ FUERA (BACKLOG REAL) ---
+        backlog_ids = []
+        for idx, fue_visitado in enumerate(visited):
+            if not fue_visitado and idx != 0: # Ignorar depósito
+                real_id = node_to_real_id[idx]
+                backlog_ids.append(real_id)
+
+        return final_route_ids, backlog_ids

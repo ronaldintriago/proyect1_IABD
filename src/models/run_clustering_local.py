@@ -6,8 +6,8 @@ from src.config.fleet_config import FLEET_CONFIG
 
 # RUTAS
 INPUT_CSV = "src/data/datasets/dataset_master.csv"
-OUTPUT_CLUSTERED = "src/data/processed/dataset_clustered.csv"
-OUTPUT_DISCARDED = "src/data/processed/pedidos_descartados.csv"
+OUTPUT_CLUSTERED = "src/data/datasets/processed/dataset_clustered.csv"
+OUTPUT_DISCARDED = "src/data/datasets/processed/pedidos_descartados.csv"
 
 def limpiar_archivos_previos():
     for f in [OUTPUT_CLUSTERED, OUTPUT_DISCARDED]:
