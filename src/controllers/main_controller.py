@@ -12,104 +12,110 @@ from src.models.routing import RouteSolver
 from src.models.clustering_service import ClusteringService
 from src.config.fleet_config import FLEET_CONFIG
 
+# --- CONFIGURACIÓN DE FECHA ---
+FECHA_SIMULACION = "2025-12-15" 
+
 class LogisticsController:
     
     @staticmethod
     def ejecutar_calculo_diario(flota_usuario):
-        """
-        MODO MANUAL: Rutas con recursos finitos.
-        """
-        print("\n" + "="*60)
-        print("🚀 INICIANDO MODO MANUAL (FLOTA USUARIO)")
-        print("="*60)
+        print("\n" + "="*60, flush=True)
+        print(f"🚀 INICIANDO MODO MANUAL | Fecha Simulación: {FECHA_SIMULACION}", flush=True)
+        print("="*60, flush=True)
 
-        # 1. CARGAR DATOS
-        print("📂 Cargando datos maestros...")
+        # 1. CARGAR DATOS MAESTROS (dataset_master.csv)
+        print("📂 Cargando datos maestros...", flush=True)
+        path_master = "data/processed/dataset_master.csv"
+        
+        # Búsqueda robusta del maestro
+        if not os.path.exists(path_master):
+            if os.path.exists("dataset_master.csv"): path_master = "dataset_master.csv"
+            else: return {"error": "Falta dataset_master.csv. Por favor súbelo o ejecútalo."}
+
         try:
-            if os.path.exists("src/data/datasets/dataset_master.csv"):
-                 df_vista_maestra = pd.read_csv("src/data/datasets/dataset_master.csv")
-            else:
-                 return {"error": "Falta dataset_master.csv. Ejecuta el ETL primero."}
+            df_vista_maestra = pd.read_csv(path_master)
         except Exception as e:
             return {"error": str(e)}
        
         # 2. CLUSTERING
-        print("🤖 Ejecutando Clustering (Asignación por Peso)...")
+        print("🤖 Ejecutando Clustering (Asignación por Peso)...", flush=True)
         cluster_service = ClusteringService(df_vista_maestra)
         df_accepted, df_discarded_weight, _, _ = cluster_service.run_user_fleet_clustering(flota_usuario)
         
-        print(f"   -> Aceptados Clustering: {len(df_accepted)} | Backlog Peso: {len(df_discarded_weight)}")
+        print(f"   -> Clustering OK. Aceptados: {len(df_accepted)} | Descartados Peso: {len(df_discarded_weight)}", flush=True)
+
+        # --- 💾 GUARDADO AUTOMÁTICO DE CSV (NUEVO) ---
+        # Esto crea el archivo 'dataset_clustered.csv' para que el mapa pueda leerlo después.
+        try:
+            output_path = "data/processed/dataset_clustered.csv"
+            os.makedirs(os.path.dirname(output_path), exist_ok=True)
+            df_accepted.to_csv(output_path, index=False)
+            print(f"💾 Archivo intermedio generado: {output_path}", flush=True)
+        except Exception as e:
+            print(f"⚠️ No se pudo guardar el archivo intermedio: {e}", flush=True)
+        # ---------------------------------------------
 
         # 3. ROUTING
-        print("🚚 Calculando Rutas Óptimas...")
+        print("🚚 Calculando Rutas (Larga Distancia)...", flush=True)
         
         resultados_finales = []
         backlog_tiempo_ids = []
 
         if not df_accepted.empty:
             ids_clusters = df_accepted['cluster_id'].unique()
-            barra_progreso = tqdm(ids_clusters, desc="Ruteando", unit="vehiculo")
+            barra_progreso = tqdm(ids_clusters, desc="Ruteando", unit="veh")
             
             for cluster_id in barra_progreso:
-                # A. OBTENER CLIENTES DEL CLÚSTER
-                subset_clientes = df_accepted[df_accepted['cluster_id'] == cluster_id].copy()
-                
-                # Obtener configuración vehículo
-                tipo_id = subset_clientes.iloc[0]['tipoVehiculo_id']
+                subset = df_accepted[df_accepted['cluster_id'] == cluster_id].copy()
+                tipo_id = subset.iloc[0]['tipoVehiculo_id']
                 config = FLEET_CONFIG.get(int(tipo_id))
                 
-                if not config: continue
-                barra_progreso.set_postfix({"Tipo": config['nombre']})
-
-                # ==========================================================
-                # B. INYECCIÓN DEL DEPÓSITO (CENTRAL MATARÓ) - CRÍTICO
-                # ==========================================================
-                # Creamos la fila 0 que representa el almacén
+                # Inyección Depósito
                 deposito = pd.DataFrame([{
                     'PedidoID': 0,                
                     'cluster_id': cluster_id,     
                     'tipoVehiculo_id': tipo_id,
-                    'Latitud': 41.5381,           # COORDENADAS MATARÓ
+                    'Latitud': 41.5381,           
                     'Longitud': 2.4447,
                     'vehiculo_nombre': 'CENTRAL',
                     'Fecha_Limite_Entrega': '2099-12-31', 
                     'Peso_Total_Kg': 0            
                 }])
+                df_routing = pd.concat([deposito, subset], ignore_index=True)
 
-                # Unimos: Depósito primero + Clientes después
-                df_routing_input = pd.concat([deposito, subset_clientes], ignore_index=True)
-
-                # ==========================================================
-                # C. LLAMADA AL ROUTING
-                # ==========================================================
                 try:
-                    
                     solver = RouteSolver(
-                        df_routing_input, 
-                        vehicle_speed_kmh=config["velocidad_media_kmh"],
-                        max_hours=8 
+                        df_routing, 
+                        vehicle_speed_kmh=config["velocidad_media_kmh"], 
+                        max_hours=1000, 
+                        start_date_str=FECHA_SIMULACION
                     )
-                    ruta = solver.solve()
                     
-                    if ruta:
+                    ruta, olvidados = solver.solve()
+                    
+                    if olvidados:
+                        backlog_tiempo_ids.extend(olvidados)
+
+                    if ruta and len(ruta) > 2:
                         resultados_finales.append({
                             "VehiculoID": int(cluster_id),
                             "Tipo": config["nombre"],
                             "Ruta": ruta,
-                            "Pedidos": len(ruta) - 2, # -2 porque hay salida y llegada a central
-                            "Carga": subset_clientes['Peso_Total_Kg'].sum()
+                            "Pedidos": len(ruta) - 2,
+                            "Carga": subset['Peso_Total_Kg'].sum()
                         })
-                    else:
-                        # Si ruta es None, es imposible llegar a tiempo
-                        backlog_tiempo_ids.extend(subset_clientes['PedidoID'].tolist())
+                    
                 except Exception as e:
-                    print(f"Error en cluster {cluster_id}: {e}")
-                    backlog_tiempo_ids.extend(subset_clientes['PedidoID'].tolist())
+                    print(f"Error Routing Cluster {cluster_id}: {e}", flush=True)
+                    backlog_tiempo_ids.extend(subset['PedidoID'].tolist())
         
         # 4. RESUMEN
-        print("\n" + "-"*60)
-        print(f"🏁 FINALIZADO. Rutas OK: {len(resultados_finales)} | Backlog Total: {len(df_discarded_weight) + len(backlog_tiempo_ids)}")
-        print("-"*60)
+        total_backlog_count = len(df_discarded_weight) + len(backlog_tiempo_ids)
+        print("\n" + "-"*60, flush=True)
+        print(f"🏁 FINALIZADO. Rutas OK: {len(resultados_finales)} | Backlog Total: {total_backlog_count}", flush=True)
+        print(f"   - Por Peso (Clustering): {len(df_discarded_weight)}", flush=True)
+        print(f"   - Por Caducidad (Routing): {len(backlog_tiempo_ids)}", flush=True)
+        print("-"*60 + "\n", flush=True)
 
         return {
             "rutas": resultados_finales,
@@ -123,12 +129,12 @@ class LogisticsController:
         """
         MODO AUTOMÁTICO
         """
-        print("\n" + "="*60)
-        print("🔮 INICIANDO CÁLCULO DE FLOTA PERFECTA")
-        print("="*60)
+        print("\n" + "="*60, flush=True)
+        print(f"🔮 INICIANDO CÁLCULO FLOTA PERFECTA | Fecha: {FECHA_SIMULACION}", flush=True)
+        print("="*60, flush=True)
 
-        if os.path.exists("src/data/datasets/dataset_master.csv"):
-             df_vista_maestra = pd.read_csv("src/data/datasets/dataset_master.csv")
+        if os.path.exists("data/processed/dataset_master.csv"):
+             df_vista_maestra = pd.read_csv("data/processed/dataset_master.csv")
         else:
              return {"error": "Falta dataset_master.csv"}
 
@@ -141,17 +147,15 @@ class LogisticsController:
 
         flota_optima = None
         iteracion = 0
-        max_iteraciones = 10 
+        max_iteraciones = 12 
 
         with tqdm(total=max_iteraciones, desc="Optimizando") as pbar:
             while iteracion < max_iteraciones:
                 iteracion += 1
                 pbar.set_description(f"Iteración {iteracion} | Flota: {flota_actual}")
                 
-                # A. Clustering
                 df_accepted, df_discarded, _, _ = cluster_service.run_user_fleet_clustering(flota_actual)
 
-                # B. Routing Check
                 backlog_tiempo = []
                 rutas_validas = []
 
@@ -159,41 +163,40 @@ class LogisticsController:
                     clusters = df_accepted['cluster_id'].unique()
                     
                     for cluster_id in clusters: 
-                        subset_clientes = df_accepted[df_accepted['cluster_id'] == cluster_id].copy()
-                        tipo_id = subset_clientes.iloc[0]['tipoVehiculo_id']
+                        subset = df_accepted[df_accepted['cluster_id'] == cluster_id].copy()
+                        tipo_id = subset.iloc[0]['tipoVehiculo_id']
                         config = FLEET_CONFIG.get(int(tipo_id))
 
-                        # --- INYECCIÓN DEPÓSITO TAMBIÉN AQUÍ ---
                         deposito = pd.DataFrame([{
                             'PedidoID': 0, 'cluster_id': cluster_id, 'tipoVehiculo_id': tipo_id,
                             'Latitud': 41.5381, 'Longitud': 2.4447, 'vehiculo_nombre': 'CENTRAL',
                             'Fecha_Limite_Entrega': '2099-12-31', 'Peso_Total_Kg': 0            
                         }])
-                        df_routing_input = pd.concat([deposito, subset_clientes], ignore_index=True)
-                        # ---------------------------------------
+                        df_routing = pd.concat([deposito, subset], ignore_index=True)
 
                         try:
-                            # Aumentado max_hours a 24 para pruebas
                             solver = RouteSolver(
-                                df_routing_input, 
+                                df_routing, 
                                 vehicle_speed_kmh=config["velocidad_media_kmh"],
-                                max_hours=24
+                                max_hours=1000,
+                                start_date_str=FECHA_SIMULACION
                             )
-                            ruta = solver.solve()
+                            # --- CAPTURAMOS BACKLOG ---
+                            ruta, olvidados = solver.solve()
+                            
+                            if olvidados:
+                                backlog_tiempo.extend(olvidados)
 
-                            if ruta:
+                            if ruta and len(ruta) > 2:
                                 rutas_validas.append({
                                     "VehiculoID": int(cluster_id),
                                     "Tipo": config["nombre"],
-                                    "Carga": subset_clientes['Peso_Total_Kg'].sum(),
+                                    "Carga": subset['Peso_Total_Kg'].sum(),
                                     "Ruta": ruta
                                 })
-                            else:
-                                backlog_tiempo.extend(subset_clientes['PedidoID'].tolist())
                         except:
-                            backlog_tiempo.extend(subset_clientes['PedidoID'].tolist())
+                            backlog_tiempo.extend(subset['PedidoID'].tolist())
 
-                # C. Evaluar
                 total_backlog = len(df_discarded) + len(backlog_tiempo)
 
                 if total_backlog == 0:
@@ -205,17 +208,18 @@ class LogisticsController:
                     }
                     break
                 else:
-                    # Estrategia incremento
                     pbar.write(f"❌ Fallo (Backlog: {total_backlog}). Incrementando...")
+                    pbar.update(1)
+                    
                     peso_backlog = df_discarded['Peso_Total_Kg'].sum() if not df_discarded.empty else 0
-                    if peso_backlog > 1500 or len(backlog_tiempo) > 2:
+                    if peso_backlog > 1500 or len(backlog_tiempo) > 4:
                         flota_actual[4] = flota_actual.get(4, 0) + 1
                     else:
                         flota_actual[2] = flota_actual.get(2, 0) + 1
         
         return flota_optima
 
-    
+
 def main_test_modelo():
         # Prueba rápida del modo manual
         flota_test = {1:5, 2: 6, 4:1}
