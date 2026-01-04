@@ -26,7 +26,7 @@ El proyecto sigue una arquitectura **MVC (Modelo-Vista-Controlador)** modulariza
 
 ## 📂 Estructura del Proyecto
 
-    IA_DELIVERY_PROJECT/
+    PROJECT1_IABD/
     ├── 📂 assets/              # Recursos estáticos (imágenes, logos)
     ├── 📂 data/                # Data Lake (Fuera del código fuente)
     │   ├── 📂 raw/             # CSVs originales (Clientes, Pedidos, etc.)
@@ -54,7 +54,6 @@ Clona el repositorio e instala las dependencias:
 ```bash
 # Clonar repositorio
 git clone [https://github.com/tu-usuario/ia-delivery.git](https://github.com/tu-usuario/ia-delivery.git)
-cd ia-delivery
 
 # Crear entorno virtual y sincronizar dependencias
 uv sync
