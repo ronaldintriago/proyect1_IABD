@@ -1,199 +1,216 @@
-
-
 import pandas as pd
+import sys
+import os
+import math
+from tqdm import tqdm 
+
+# Ajuste de paths para importaciones
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..')))
+
 from src.data.db_loader import DataLoader
 from src.models.routing import RouteSolver
 from src.models.clustering_service import ClusteringService
 from src.config.fleet_config import FLEET_CONFIG
-
-# Configuración de Flota 
-
 
 class LogisticsController:
     
     @staticmethod
     def ejecutar_calculo_diario(flota_usuario):
         """
-        Orquesta todo el proceso: Datos -> Clustering -> Routing.
-        
-        Args:
-            flota_usuario (dict): {vehiculo_id: cantidad}. Ej: {1: 2, 3: 1}
+        MODO MANUAL: Rutas con recursos finitos definidos por el usuario.
         """
         print("\n" + "="*60)
-        print("🚀 INICIANDO EJECUCIÓN DEL CONTROLADOR PRINCIPAL")
+        print("🚀 INICIANDO MODO MANUAL (FLOTA USUARIO)")
         print("="*60)
 
-        # ------------------------------------------------------
-        # PASO 1: CARGAR DATOS (ETL)
-        # ------------------------------------------------------
-        print("📂 1. Cargando datos maestros...")
-        df_vista_maestra = DataLoader.load_all_data() 
-        
-        if df_vista_maestra is None or df_vista_maestra.empty:
-            return {"error": "No se pudieron cargar los datos."}       
-        # ------------------------------------------------------
-        # PASO 2: CLUSTERING (TU PARTE)
-        # ------------------------------------------------------
-        print("🤖 2. Ejecutando Clustering (Asignación de Flota)...")
-        
-        # Instanciamos tu servicio
+        # 1. CARGAR DATOS
+        print("📂 Cargando datos maestros...")
+        try:
+            # Intentamos cargar el CSV maestro limpio
+            if os.path.exists("src/data/datasets/dataset_master.csv"):
+                 df_vista_maestra = pd.read_csv("src/data/datasets/dataset_master.csv")
+            else:
+                 # Fallback: Usar el loader (ajusta según tu lógica real de carga)
+                 return {"error": "Falta dataset_master.csv. Ejecuta el ETL primero."}
+        except Exception as e:
+            return {"error": str(e)}
+       
+        # 2. CLUSTERING (CAPACIDAD)
+        print("🤖 Ejecutando Clustering (Asignación por Peso)...")
         cluster_service = ClusteringService(df_vista_maestra)
         
-        # A. Ejecutamos con la flota REAL del usuario
-        # Esto devuelve los pedidos que SÍ caben (accepted) y los que NO (discarded)
-        df_accepted, df_discarded, user_cost, user_routes_details = cluster_service.run_user_fleet_clustering(flota_usuario)
+        # Llamada al servicio de tu compañero
+        df_accepted, df_discarded_weight, _, _ = cluster_service.run_user_fleet_clustering(flota_usuario)
         
-        # B. Ejecutamos la comparativa IDEAL (para el reporte final)
-        ideal_routes_details, ideal_cost = cluster_service.run_optimal_clustering()
-        
-        print(f"   ✅ Clustering finalizado. Pedidos aceptados para ruta: {len(df_accepted)}")
-        
-        # --- MOCK TEMPORAL (Simulamos que tu compañero ya hizo su trabajo) ---
-        # Esto lo borras cuando él te pase su código
-        df_clustered = df_vista_maestra.copy()
-        df_clustered['ClusterID'] = 1  # Todos al vehículo 1
-        df_clustered['TipoVehiculoID'] = 4 # Tipo Tráiler
-        # -------------------------------------------------------------------
+        print(f"   -> Aceptados para ruteo: {len(df_accepted)}")
+        print(f"   -> Descartados por Peso (Backlog 1): {len(df_discarded_weight)}")
 
-        # 3. ROUTING (Tu trabajo)
+        # 3. ROUTING (TIEMPO)
+        print("🚚 Calculando Secuencias Óptimas...")
+        
         resultados_finales = []
-        backlog = []
+        backlog_tiempo_ids = []
 
-        ids_vehiculos = df_clustered['ClusterID'].unique()
+        if not df_accepted.empty:
+            ids_clusters = df_accepted['cluster_id'].unique()
 
-        for vehiculo_id in ids_vehiculos:
-            # A. Cortamos el trozo de tarta
-            subset = df_clustered[df_clustered['ClusterID'] == vehiculo_id].copy()
+            # Barra de progreso visual
+            barra_progreso = tqdm(ids_clusters, desc="Ruteando Vehículos", unit="ruta")
             
-            # B. Miramos configuración
-            tipo_id = subset.iloc[0]['TipoVehiculoID']
-            config_vehiculo = FLEET_CONFIG.get(tipo_id, FLEET_CONFIG[2]) # Default a Tipo 2
-            
-            # C. Ejecutamos Solver
-            try:
-                solver = RouteSolver(
-                    subset, 
-                    vehicle_speed_kmh=config_vehiculo["velocidad"],
-                    max_hours=8
-                )
-                ruta = solver.solve()
+            for cluster_id in barra_progreso:
+                subset = df_accepted[df_accepted['cluster_id'] == cluster_id].copy()
                 
-                if ruta:
-                    resultados_finales.append({
-                        "VehiculoID": vehiculo_id,
-                        "Tipo": config_vehiculo["nombre"],
-                        "Ruta": ruta,  # Lista ordenada de IDs
-                        "Pedidos": len(ruta) - 2 # Restamos Depósito salida y llegada
-                    })
-                else:
-                    # Si falla, todo al backlog
-                    backlog.extend(subset['PedidoID'].tolist())
-                    
-            except Exception as e:
-                print(f"Error en vehículo {vehiculo_id}: {e}")
-                backlog.extend(subset['PedidoID'].tolist())
-
-        # 4. RETORNO PARA LA VISTA
-        return {
-            "rutas": resultados_finales,
-            "backlog": backlog,
-            "total_pedidos": len(df_vista_maestra)
-        }
-        
-    @staticmethod
-    def calcular_flota_perfecta():
-        """
-        Calcula la composición ideal de vehículos para Backlog = 0.
-        Estrategia: Iterar incrementando K (clusters) hasta que todo encaje.
-        """
-        # 1. Cargar Datos
-        df_vista, _ = DataLoader.get_data_from_csv_files("data/csv_files")
-        total_kilos = df_vista['Cantidad'].sum()
-        
-        # 2. Estimación Inicial (Heurística)
-        # Empezamos probando con el mínimo de Tráilers posibles para llevar todo el peso
-        capacidad_max_trailer = FLEET_CONFIG[4]["capacidad"] # 25.000
-        k_inicial = int(total_kilos / capacidad_max_trailer) + 1
-        
-        # Límite de seguridad para no buclear infinito
-        k_maximo = len(df_vista)  
-        
-        print(f"🔄 Iniciando búsqueda de flota ideal. K inicial: {k_inicial}")
-
-        flota_ideal_resultado = None
-
-        # 3. Bucle Iterativo
-        for k in range(k_inicial, k_maximo):
-            # A. Simulamos Clustering con 'k' vehículos
-            # (Tu compañero debe permitirte pasarle el número de clusters deseado 'n_clusters')
-            # df_clustered = ClusterEngine.generar_clusters_k_means(df_vista, n_clusters=k)
-            
-            # --- MOCK (Simulación mientras no tienes a tu compañero) ---
-            df_clustered = df_vista.copy()
-            # Simulamos que dividimos equitativamente en k grupos
-            df_clustered['ClusterID'] = pd.qcut(df_clustered.index, k, labels=[f"V_{i}" for i in range(k)])
-            # ---------------------------------------------------------
-
-            rutas_validas = []
-            backlog_total = []
-            flota_sugerida = {} # Para contar: 2 Trailers, 1 Furgoneta...
-
-            ids_vehiculos = df_clustered['ClusterID'].unique()
-
-            # B. Evaluamos cada clúster generado
-            for vid in ids_vehiculos:
-                subset = df_clustered[df_clustered['ClusterID'] == vid].copy()
-                carga_cluster = subset['Cantidad'].sum()
+                # Obtener configuración del vehículo
+                tipo_id = subset.iloc[0]['tipoVehiculo_id']
+                config = FLEET_CONFIG.get(int(tipo_id))
                 
-                # C. ASIGNACIÓN DINÁMICA DE VEHÍCULO
-                # Aquí decidimos qué vehículo compramos según la carga del clúster
-                if carga_cluster <= FLEET_CONFIG[2]["capacidad"]: # Cabe en Furgoneta
-                    tipo_asignado = 2
-                elif carga_cluster <= FLEET_CONFIG[4]["capacidad"]: # Cabe en Tráiler
-                    tipo_asignado = 4
-                else:
-                    # Si el clúster pesa más que un Tráiler, este 'k' no vale.
-                    # El clustering ha fallado en equilibrar. Forzamos siguiente iteración.
-                    backlog_total.append("OVERWEIGHT") 
-                    break 
+                if not config: continue
 
-                config = FLEET_CONFIG[tipo_asignado]
-                
-                # D. Routing (Validar tiempos)
+                # Info visual en la barra
+                barra_progreso.set_postfix({"Vehículo": config['nombre'], "ID": cluster_id})
+
                 try:
+                    # Instanciar Solver
                     solver = RouteSolver(
                         subset, 
-                        vehicle_speed_kmh=config["velocidad"],
+                        vehicle_speed_kmh=config["velocidad_media_kmh"], # Clave exacta de fleet_config.py
                         max_hours=8
                     )
                     ruta = solver.solve()
                     
                     if ruta:
-                        rutas_validas.append({
-                            "VehiculoID": vid,
+                        resultados_finales.append({
+                            "VehiculoID": int(cluster_id),
                             "Tipo": config["nombre"],
-                            "Carga": carga_cluster,
-                            "Ruta": ruta
+                            "Ruta": ruta,
+                            "Pedidos": len(ruta) - 2, # Restar depósitos
+                            "Carga": subset['Peso_Total_Kg'].sum()
                         })
-                        # Contamos para el resumen
-                        nombre_tipo = config["nombre"]
-                        flota_sugerida[nombre_tipo] = flota_sugerida.get(nombre_tipo, 0) + 1
                     else:
-                        backlog_total.extend(subset['PedidoID'].tolist())
-                        
-                except:
-                    backlog_total.append("ERROR")
+                        # Si devuelve None es Infeasible por tiempo
+                        backlog_tiempo_ids.extend(subset['PedidoID'].tolist())
+                except Exception as e:
+                    # Error inesperado cuenta como backlog
+                    backlog_tiempo_ids.extend(subset['PedidoID'].tolist())
+        
+        # 4. RESUMEN
+        total_backlog_count = len(df_discarded_weight) + len(backlog_tiempo_ids)
+        print("\n" + "-"*60)
+        print(f"🏁 FINALIZADO. Rutas OK: {len(resultados_finales)} | Backlog Total: {total_backlog_count}")
+        print("-"*60)
 
-            # 4. Verificación de Éxito
-            if len(backlog_total) == 0:
-                # ¡ÉXITO! Hemos encontrado una configuración donde cabe todo y llega a tiempo
-                flota_ideal_resultado = {
-                    "resumen_flota": flota_sugerida, # Ej: {"Tráiler": 2, "Furgoneta": 1}
-                    "rutas": rutas_validas,
-                    "iteraciones": k
-                }
-                break # Salimos del bucle
-            else:
-                print(f"   K={k} insuficiente (Backlog: {len(backlog_total)}). Probando K={k+1}...")
+        return {
+            "rutas": resultados_finales,
+            "backlog_capacidad": df_discarded_weight,
+            "backlog_tiempo": backlog_tiempo_ids,
+            "total_pedidos": len(df_vista_maestra)
+        }
 
-        return flota_ideal_resultado
+    @staticmethod
+    def calcular_flota_perfecta():
+        """
+        MODO AUTOMÁTICO: Encuentra la flota ideal incrementando recursos hasta Backlog=0.
+        """
+        print("\n" + "="*60)
+        print("🔮 INICIANDO CÁLCULO DE FLOTA PERFECTA")
+        print("="*60)
+
+        # Cargar Datos
+        if os.path.exists("src/data/datasets/dataset_master.csv"):
+             df_vista_maestra = pd.read_csv("src/data/datasets/dataset_master.csv")
+        else:
+             return {"error": "Falta dataset_master.csv"}
+
+        # Estimación Inicial (Heurística)
+        total_kilos = df_vista_maestra['Peso_Total_Kg'].sum()
+        cap_trailer = FLEET_CONFIG[4]["capacidad_kg"]
+        num_trailers_inicial = math.ceil(total_kilos / cap_trailer)
+        
+        flota_actual = {4: num_trailers_inicial} 
+        cluster_service = ClusteringService(df_vista_maestra)
+
+        flota_optima = None
+        iteracion = 0
+        max_iteraciones = 12 
+
+        print(f"⚖️  Carga Total: {total_kilos} Kg -> Inicio: {num_trailers_inicial} Tráilers")
+
+        # Barra de progreso general para iteraciones
+        with tqdm(total=max_iteraciones, desc="Buscando Solución Ideal") as pbar:
+            
+            while iteracion < max_iteraciones:
+                iteracion += 1
+                pbar.set_description(f"Iteración {iteracion} | Probando: {flota_actual}")
+                
+                # A. Clustering
+                df_accepted, df_discarded, _, _ = cluster_service.run_user_fleet_clustering(flota_actual)
+
+                # B. Routing
+                backlog_tiempo = []
+                rutas_validas = []
+
+                if not df_accepted.empty:
+                    clusters = df_accepted['cluster_id'].unique()
+                    
+                    for cluster_id in clusters: 
+                        subset = df_accepted[df_accepted['cluster_id'] == cluster_id].copy()
+                        tipo_id = subset.iloc[0]['tipoVehiculo_id']
+                        config = FLEET_CONFIG.get(int(tipo_id))
+
+                        try:
+                            solver = RouteSolver(
+                                subset, 
+                                vehicle_speed_kmh=config["velocidad_media_kmh"],
+                                max_hours=8
+                            )
+                            ruta = solver.solve()
+
+                            if ruta:
+                                rutas_validas.append({
+                                    "VehiculoID": int(cluster_id),
+                                    "Tipo": config["nombre"],
+                                    "Carga": subset['Peso_Total_Kg'].sum(),
+                                    "Ruta": ruta
+                                })
+                            else:
+                                backlog_tiempo.extend(subset['PedidoID'].tolist())
+                        except:
+                            backlog_tiempo.extend(subset['PedidoID'].tolist())
+
+                # C. Evaluar Resultado
+                total_backlog = len(df_discarded) + len(backlog_tiempo)
+
+                if total_backlog == 0:
+                    pbar.write(f"✅ ¡EUREKA! Solución encontrada en iteración {iteracion}")
+                    pbar.update(max_iteraciones - iteracion + 1) # Completar barra
+                    flota_optima = {
+                        "resumen_flota": flota_actual.copy(),
+                        "rutas": rutas_validas,
+                        "iteraciones": iteracion
+                    }
+                    break
+                else:
+                    pbar.write(f"❌ Fallo (Backlog: {total_backlog}). Incrementando flota...")
+                    pbar.update(1)
+                    
+                    # Estrategia de incremento inteligente
+                    peso_backlog = df_discarded['Peso_Total_Kg'].sum() if not df_discarded.empty else 0
+                    
+                    # Si sobra mucho peso o fallan muchos por tiempo, metemos camión grande
+                    if peso_backlog > 1500 or len(backlog_tiempo) > 4:
+                        flota_actual[4] = flota_actual.get(4, 0) + 1
+                    else:
+                        # Ajuste fino con furgoneta
+                        flota_actual[2] = flota_actual.get(2, 0) + 1
+        
+        return flota_optima
+    
+def main_test_modelo():
+        # Prueba rápida del modo manual
+        flota_test = {1: 5, 2: 2, 4: 1}
+        LogisticsController.ejecutar_calculo_diario(flota_test)
+
+# --- BLOQUE DE TEST (EJECUCIÓN DIRECTA) ---
+if __name__ == "__main__":
+    main_test_modelo()
+    

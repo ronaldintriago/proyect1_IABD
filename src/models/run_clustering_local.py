@@ -33,7 +33,7 @@ def pedir_flota_usuario():
         print("⚠️ Flota vacía. Saliendo..."); sys.exit()
     return user_fleet
 
-def main():
+def main_cluster():
     limpiar_archivos_previos()
 
     if not os.path.exists(INPUT_CSV):
@@ -86,4 +86,4 @@ def main():
         print(f"💾 Descartados guardados en: {OUTPUT_DISCARDED}")
 
 if __name__ == "__main__":
-    main()
+    main_cluster()
