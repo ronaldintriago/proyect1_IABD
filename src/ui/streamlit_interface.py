@@ -92,7 +92,7 @@ def streamlit_interface():
                 
                 # 2. RECARGAR DATOS DEL MAPA AL INSTANTE (NUEVO)
                 # Como el controlador acaba de crear/sobreescribir el archivo, lo leemos de nuevo
-                path_generado = "src/data/processed/dataset_clustered.csv"
+                path_generado = "data/processed/dataset_clustered.csv"
                 if os.path.exists(path_generado):
                     try:
                         df_nuevo = pd.read_csv(path_generado)
@@ -117,7 +117,7 @@ def streamlit_interface():
             # Si el controlador devolvió un error (ej: falta archivo), lo mostramos y paramos.
             if "error" in resultado:
                 st.error(f"❌ No se pudo realizar el cálculo: {resultado['error']}")
-                st.info("Asegúrate de que 'dataset_master.csv' está en la carpeta 'src/data/datasets/'.")
+                st.info("Asegúrate de que 'dataset_master.csv' está en la carpeta 'data/processed'.")
             
             else:
                 # 2. SI TODO HA IDO BIEN, MOSTRAMOS LOS DATOS
