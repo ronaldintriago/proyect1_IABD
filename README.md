@@ -34,7 +34,7 @@ El proyecto sigue una arquitectura **MVC (Modelo-Vista-Controlador)** modulariza
     ├── 📂 src/                 # Código Fuente Principal
     │   ├── 📂 config/          # Configuraciones (DB, Flota, Constantes)
     │   ├── 📂 controllers/     # Lógica de Orquestación (Main Controller)
-    │   ├── 📂 data/            # Scripts de ETL y Limpieza (Cleaners, Loaders)
+    │   ├── 📂 etl/            # Scripts de ETL y Limpieza (Cleaners, Loaders)
     │   ├── 📂 models/          # Algoritmos de IA (Clustering & Routing)
     │   └── 📂 ui/              # Interfaz de Usuario (Streamlit)
     ├── main.py                 # Punto de entrada de la aplicación

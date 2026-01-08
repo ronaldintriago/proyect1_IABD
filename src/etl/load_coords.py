@@ -4,7 +4,7 @@ import pandas as pd
 from geopy.geocoders import Nominatim
 from geopy.extra.rate_limiter import RateLimiter
 
-from src.data.db_loader import DataLoader
+from src.etl.db_loader import DataLoader
 
 logger = logging.getLogger(__name__)
 

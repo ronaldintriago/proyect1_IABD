@@ -3,7 +3,7 @@ import logging
 import os
 # Ajusta los imports según tu estructura de carpetas
 from src.config.db_config import DBConfig
-from src.data.clean_data import DataCleaner
+from src.etl.clean_data import DataCleaner
 
 logger = logging.getLogger(__name__)
 

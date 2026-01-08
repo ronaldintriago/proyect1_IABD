@@ -7,7 +7,7 @@ from tqdm import tqdm
 # Ajuste de paths
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..')))
 
-from src.data.db_loader import DataLoader
+from src.etl.db_loader import DataLoader
 from src.models.routing import RouteSolver
 from src.models.clustering_service import ClusteringService
 from src.config.fleet_config import FLEET_CONFIG
