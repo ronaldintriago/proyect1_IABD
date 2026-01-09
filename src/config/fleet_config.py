@@ -1,4 +1,9 @@
-# fleet_config.py
+
+
+
+# FECHA BASE DE LA SIMULACIÓN
+# Fingimos que "Hoy" es este día para que los pedidos de dic-2025 sean válidos
+SIMULATION_START_DATE = "2025-12-15 08:00:00"
 
 # Definición de la Flota con parámetros ECONÓMICOS
 # Costes estimados para logística en España (Ejemplo)

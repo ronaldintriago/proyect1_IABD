@@ -1,203 +1,184 @@
 import streamlit as st
 import pandas as pd
-import os
+import folium
 from streamlit_folium import st_folium
+import requests
+import sys
+import os
 
-# Importamos los controladores del proyecto
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..')))
+
 from src.controllers.main_controller import LogisticsController
-from src.utils.map_renderer import render_routes_map
+from src.config.fleet_config import FLEET_CONFIG, SIMULATION_START_DATE
+
+# Configuración de página
+st.set_page_config(page_title="IA Delivery Dashboard", page_icon="🚛", layout="wide")
+
+# Constantes visuales
+HUB_COORDS = [41.5381, 2.4447]
+COLORS = ['red', 'blue', 'green', 'purple', 'orange', 'darkred', 'cadetblue', 'darkpurple', 'black']
 
 # ==============================================================================
-# 1. FUNCIÓN DE CACHÉ PARA EL MAPA (IMPORTANTE: EVITA EL BUCLE INFINITO)
+# 1. SERVICIO DE TRAZADO (OSRM)
 # ==============================================================================
-@st.cache_resource
-def generar_mapa_cacheado(rutas, df_maestro_dict):
-    """
-    Genera el objeto mapa de Folium y lo guarda en memoria (caché).
-    Si los datos no cambian, no vuelve a ejecutar la lógica pesada de OSRM.
-    """
-    return render_routes_map(rutas, df_maestro_dict)
+@st.cache_data(show_spinner=False)
+def get_full_route_geometry(waypoints):
+    if not waypoints or len(waypoints) < 2: return waypoints
+    try:
+        coords = ";".join([f"{p[1]:.6f},{p[0]:.6f}" for p in waypoints])
+        url = f"http://router.project-osrm.org/route/v1/driving/{coords}?overview=full&geometries=geojson"
+        r = requests.get(url, timeout=2.0)
+        if r.status_code == 200:
+            data = r.json()
+            if 'routes' in data and len(data['routes']) > 0:
+                geometry = data['routes'][0]['geometry']['coordinates']
+                return [[p[1], p[0]] for p in geometry]
+    except: pass
+    return waypoints
 
 # ==============================================================================
-# 2. INTERFAZ PRINCIPAL
+# 2. FUNCIONES DE MAPA
 # ==============================================================================
-def streamlit_interface():
-    st.set_page_config(page_title="IA Delivery", layout="wide", page_icon="🚛")
-    st.title("🚛 IA Delivery - Dashboard Logístico")
+def create_interactive_map(rutas_data):
+    m = folium.Map(location=[40.4168, -3.7038], zoom_start=6, tiles="CartoDB positron")
     
-    # ---------------------------------------------------------
-    # A. CARGA DE DATOS "NUCLEAR" (PARA QUE NO FALLEN LAS COORDENADAS)
-    # ---------------------------------------------------------
-    # Intentamos cargar siempre el fichero procesado que usa el algoritmo
-    path_seguro = "data/processed/dataset_clustered.csv"
+    folium.Marker(HUB_COORDS, popup="HUB CENTRAL", icon=folium.Icon(color="black", icon="warehouse", prefix="fa")).add_to(m)
+
+    if not rutas_data: return m
+
+    for i, ruta_info in enumerate(rutas_data):
+        color = COLORS[i % len(COLORS)]
+        raw_points = []
+        detalles = []
+
+        # Normalización de datos de entrada
+        orden_paradas = ruta_info.get('ruta', [])
+        if isinstance(orden_paradas, pd.DataFrame):
+            raw_points = orden_paradas[['Latitud', 'Longitud']].values.tolist()
+            detalles = orden_paradas.to_dict('records')
+        elif isinstance(orden_paradas, list):
+            raw_points = [[p.get('Latitud', p.get('lat')), p.get('Longitud', p.get('lon'))] for p in orden_paradas]
+            detalles = orden_paradas
+
+        # Trazado
+        ruta_completa = [HUB_COORDS] + raw_points + [HUB_COORDS]
+        geometry = get_full_route_geometry(ruta_completa)
+        
+        folium.PolyLine(locations=geometry, color=color, weight=4, opacity=0.7, tooltip=ruta_info.get('vehiculo')).add_to(m)
+
+        for idx, (coord, det) in enumerate(zip(raw_points, detalles)):
+            label = f"P{idx+1}: {det.get('nombre_completo', 'Cliente')}"
+            folium.CircleMarker(
+                location=coord, radius=5, color=color, fill=True, fill_color="white", fill_opacity=1,
+                popup=label, tooltip=label
+            ).add_to(m)
+    return m
+
+def render_metrics(res_clustering):
+    metrics = res_clustering.get('metrics', {})
+    acc_df = res_clustering.get('accepted_df', [])
+    disc_df = res_clustering.get('discarded_df', [])
     
-    # Si no existe, buscamos alternativas (por si se ejecuta desde otra carpeta)
-    if not os.path.exists(path_seguro):
-        if os.path.exists("dataset_clustered.csv"):
-            path_seguro = "dataset_clustered.csv"
+    # Costes
+    user_cost = metrics.get('cost', 0) # A veces viene como 'cost' o 'user_cost' dependiendo del runner
+    if user_cost == 0: user_cost = metrics.get('user_cost', 0)
     
-    if os.path.exists(path_seguro):
-        try:
-            df_mapa = pd.read_csv(path_seguro)
-            
-            # Normalización de nombres de columnas (Blindaje)
-            rename_dict = {
-                'lat': 'Latitud', 'lon': 'Longitud', 'id': 'PedidoID', 
-                'latitud': 'Latitud', 'longitud': 'Longitud'
-            }
-            df_mapa.rename(columns=rename_dict, inplace=True)
-            
-            # CONVERSIÓN A STRING PARA EVITAR FALLOS DE ID (Número vs Texto)
-            if 'PedidoID' in df_mapa.columns:
-                df_mapa['PedidoID'] = df_mapa['PedidoID'].astype(str).str.strip()
-            
-            st.session_state['df_maestro'] = df_mapa
-            # st.success(f"✅ Datos de coordenadas cargados correctamente ({len(df_mapa)} registros).")
-            
-        except Exception as e:
-            st.error(f"Error leyendo CSV de coordenadas: {e}")
+    col1, col2, col3, col4 = st.columns(4)
+    col1.metric("Coste Total", f"{user_cost:,.2f} €")
+    col2.metric("Pedidos Servidos", len(acc_df) if acc_df is not None else 0)
+    
+    n_disc = len(disc_df) if disc_df is not None else 0
+    col3.metric("Descartados", n_disc, delta="-Crítico" if n_disc > 0 else "OK", delta_color="inverse")
+    
+    # Ocupación
+    details = res_clustering.get('details', [])
+    # CORRECCIÓN ERROR TYPE: Aseguramos que sea lista
+    if isinstance(details, dict): details = details.get('user_routes', [])
+    
+    if details:
+        avg = sum([(r['peso']/r['capacidad_max'])*100 for r in details]) / len(details)
+        col4.metric("Ocupación Media", f"{avg:.1f}%")
     else:
-        st.warning("⚠️ No se encuentra 'dataset_clustered.csv'. Ejecuta primero el cálculo para generar datos.")
+        col4.metric("Ocupación", "0%")
 
-    # ---------------------------------------------------------
-    # B. INICIALIZAR ESTADO (MEMORIA)
-    # ---------------------------------------------------------
-    if 'resultados_manual' not in st.session_state:
-        st.session_state['resultados_manual'] = None
-    if 'res_ideal' not in st.session_state:
-        st.session_state['res_ideal'] = None
+# ==============================================================================
+# 3. MAIN APP
+# ==============================================================================
+def main():
+    st.title("🚛 Optimización Logística")
+    st.caption(f"Fecha Simulación: {SIMULATION_START_DATE}")
 
-    # TABS
-    tab_manual, tab_auto = st.tabs(["🎮 Panel Operativo (Diario)", "✨ Estrategia de Flota (Ideal)"])
+    if 'app_state' not in st.session_state:
+        with st.spinner("Calculando solución óptima..."):
+            res = LogisticsController.generar_arranque_automatico()
+            if res.get("status") == "error":
+                st.error(res.get('msg')); st.stop()
+            st.session_state['app_state'] = res
+            st.session_state['fleet_config_ui'] = res['clustering']['fleet_used']
 
-    # =========================================================
-    # PESTAÑA 1: MODO MANUAL
-    # =========================================================
-    with tab_manual:
-        st.sidebar.header("🕹️ Configuración Diaria")
+    state = st.session_state['app_state']
+    
+    # --- SIDEBAR ---
+    with st.sidebar:
+        st.header("⚙️ Flota")
         
-        # Inputs de flota
-        n_eco = st.sidebar.number_input("Furgonetas Eco (Tipo 1)", 0, 10, 0)
-        n_std = st.sidebar.number_input("Furgonetas Std (Tipo 2)", 0, 10, 2)
-        n_rig = st.sidebar.number_input("Camiones Rígidos (Tipo 3)", 0, 10, 0)
-        n_trl = st.sidebar.number_input("Tráilers (Tipo 4)", 0, 10, 1)
-        
-        flota_input = {1: n_eco, 2: n_std, 3: n_rig, 4: n_trl}
-
-        # --- BOTÓN DE CÁLCULO ---
-        if st.sidebar.button("🚀 Calcular Rutas (Manual)", key="btn_manual"):
-            # 1. Ejecutar cálculo (Esto ahora genera el CSV 'dataset_clustered.csv')
-            with st.spinner("🤖 Generando clusters y rutas..."):
-                st.session_state['resultados_manual'] = LogisticsController.ejecutar_calculo_diario(flota_input)
-                
-                # 2. RECARGAR DATOS DEL MAPA AL INSTANTE (NUEVO)
-                # Como el controlador acaba de crear/sobreescribir el archivo, lo leemos de nuevo
-                path_generado = "data/processed/dataset_clustered.csv"
-                if os.path.exists(path_generado):
-                    try:
-                        df_nuevo = pd.read_csv(path_generado)
-                        # Limpieza habitual
-                        rename_dict = {'lat': 'Latitud', 'lon': 'Longitud', 'id': 'PedidoID', 
-                                       'latitud': 'Latitud', 'longitud': 'Longitud'}
-                        df_nuevo.rename(columns=rename_dict, inplace=True)
-                        if 'PedidoID' in df_nuevo.columns:
-                            df_nuevo['PedidoID'] = df_nuevo['PedidoID'].astype(str).str.strip()
-                        
-                        # Actualizamos la sesión para que el mapa use los datos NUEVOS
-                        st.session_state['df_maestro'] = df_nuevo
-                        st.success("✅ Datos de mapa actualizados correctamente.")
-                        
-                    except Exception as e:
-                        st.error(f"Error recargando mapa: {e}")
-
-        resultado = st.session_state['resultados_manual']
-        
-        if resultado:
-            # 1. BLOQUE DE SEGURIDAD (NUEVO)
-            # Si el controlador devolvió un error (ej: falta archivo), lo mostramos y paramos.
-            if "error" in resultado:
-                st.error(f"❌ No se pudo realizar el cálculo: {resultado['error']}")
-                st.info("Asegúrate de que 'dataset_master.csv' está en la carpeta 'data/processed'.")
+        # Botón para borrar caché si los precios salen a 0
+        if st.button("🧹 Borrar Caché y Recargar"):
+            st.cache_data.clear()
+            for key in list(st.session_state.keys()): del st.session_state[key]
+            st.rerun()
             
-            else:
-                # 2. SI TODO HA IDO BIEN, MOSTRAMOS LOS DATOS
-                c1, c2, c3 = st.columns(3)
-                
-                # Aquí es donde fallaba antes, ahora ya es seguro:
-                c1.metric("Rutas Creadas", len(resultado["rutas"]))
-                
-                servidos = resultado["total_pedidos"] - len(resultado["backlog_capacidad"]) - len(resultado["backlog_tiempo"])
-                c2.metric("Pedidos Servidos", servidos)
-                
-                backlog = len(resultado["backlog_capacidad"]) + len(resultado["backlog_tiempo"])
-                c3.metric("Backlog Total", backlog, delta_color="inverse")
-
-                st.divider()
-
-                # 3. MAPA INTERACTIVO
-                st.subheader("🗺️ Mapa de Rutas")
-                
-                if resultado["rutas"]:
-                    # Intentamos cargar el DF maestro actualizado (o el generado al vuelo)
-                    if 'df_maestro' in st.session_state and st.session_state['df_maestro'] is not None:
-                        try:
-                            mapa_folium = generar_mapa_cacheado(
-                                tuple(resultado["rutas"]), 
-                                st.session_state['df_maestro']
-                            )
-                            st_folium(mapa_folium, width=1200, height=600, returned_objects=[])
-                        except Exception as e:
-                            st.error(f"💥 Error pintando mapa: {e}")
-                            st.cache_resource.clear()
-                    else:
-                        st.warning("⚠️ Rutas calculadas, pero faltan coordenadas para el mapa.")
-                else:
-                    st.info("El cálculo finalizó pero no se generaron rutas válidas (posiblemente todo es Backlog).")
-
-                # 4. DETALLES
-                with st.expander("📄 Ver Secuencia de Paradas (Detalle)"):
-                    for r in resultado["rutas"]:
-                        st.markdown(f"**{r['Tipo']} (ID {r['VehiculoID']})** - {r['Carga']} Kg")
-                        ruta_clean = [int(x) if hasattr(x, 'item') else x for x in r['Ruta']]
-                        st.code(str(ruta_clean))
-
-    # =========================================================
-    # PESTAÑA 2: MODO IDEAL
-    # =========================================================
-    with tab_auto:
-        st.header("🔮 Cálculo de Flota Perfecta")
-        st.caption("La IA determinará cuántos vehículos necesitas exactamente para Backlog 0.")
+        st.divider()
         
-        if st.button("✨ Calcular Solución Óptima", key="btn_auto"):
-            with st.spinner("🔄 Iterando escenarios (Cluster -> Routing)..."):
-                st.session_state['res_ideal'] = LogisticsController.calcular_flota_perfecta()
-        
-        res_ideal = st.session_state['res_ideal']
-        
-        if res_ideal:
-            st.success(f"¡Solución encontrada en {res_ideal['iteraciones']} iteraciones!")
+        current = st.session_state.get('fleet_config_ui', {})
+        new_input = {}
+        for vid, specs in FLEET_CONFIG.items():
+            new_input[vid] = st.number_input(specs['nombre'], value=int(current.get(vid, 0)), min_value=0)
             
-            # Resumen Flota
-            st.write("### 🚛 Flota Recomendada")
-            cols = st.columns(len(res_ideal['resumen_flota']))
-            idx = 0
-            for tipo_id, cant in res_ideal['resumen_flota'].items():
-                if idx < len(cols):
-                    cols[idx].metric(f"Vehículo Tipo {tipo_id}", f"{cant} uds.")
-                    idx += 1
+        if st.button("🔄 Recalcular Manual", type="primary"):
+            st.session_state['app_state'] = LogisticsController.recalcular_con_flota_manual(new_input)
+            st.session_state['fleet_config_ui'] = new_input
+            st.rerun()
 
-            st.divider()
-            st.subheader("🗺️ Visualización Estrategia Ideal")
+    # --- UI ---
+    render_metrics(state.get('clustering', {}))
+    
+    c1, c2 = st.columns([2, 1])
+    
+    with c1:
+        st.subheader("Mapa de Rutas")
+        if state.get('rutas'):
+            mapa = create_interactive_map(state['rutas'])
+            st_folium(mapa, width=None, height=500, returned_objects=[])
+        else:
+            st.info("Sin rutas activas")
 
-            if 'df_maestro' in st.session_state:
-                try:
-                    mapa_ideal = generar_mapa_cacheado(
-                        tuple(res_ideal['rutas']), 
-                        st.session_state['df_maestro']
-                    )
-                    st_folium(mapa_ideal, width=1200, height=600, returned_objects=[], key="mapa_ideal")
-                except Exception as e:
-                    st.error(f"Error mapa ideal: {e}")
+    with c2:
+        st.subheader("Detalle Rutas")
+        # --- CORRECCIÓN ERROR TYPE ---
+        # Accedemos directamente a 'details' como lista
+        raw_details = state.get('clustering', {}).get('details', [])
+        
+        # Si por alguna razón viniera como dict antiguo, lo extraemos
+        if isinstance(raw_details, dict):
+            raw_details = raw_details.get('user_routes', [])
+            
+        if raw_details:
+            df = pd.DataFrame(raw_details)
+            # CORRECCIÓN WARNING: Usamos use_container_width=True (es lo estándar hoy)
+            # Si te sigue dando error, simplemente quita el argumento.
+            st.dataframe(
+                df[['vehiculo', 'peso', 'paradas', 'coste']].rename(columns={'vehiculo':'Vehículo', 'coste':'€'}),
+                hide_index=True,
+                use_container_width=True 
+            )
+        else:
+            st.caption("No hay datos de rutas.")
+            
+        disc = state.get('clustering', {}).get('discarded_df')
+        if disc is not None and not disc.empty:
+            st.error(f"{len(disc)} Pedidos Perdidos")
+            st.dataframe(disc[['PedidoID', 'nombre_completo']], hide_index=True)
 
 if __name__ == "__main__":
-    streamlit_interface()
+    main()

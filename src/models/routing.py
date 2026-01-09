@@ -11,6 +11,11 @@ class RouteSolver:
         # 1. Normalización
         self.points = df_pedidos.copy()
         
+        # --- FIX CRÍTICO: RESETEAR ÍNDICE ---
+        # Esto evita el KeyError: 0, 2, etc. alineando los índices con las matrices numpy
+        self.points.reset_index(drop=True, inplace=True)
+        # ------------------------------------
+        
         column_mapping = {
             'PedidoID': 'id',
             'Latitud': 'lat',
@@ -18,6 +23,7 @@ class RouteSolver:
             'vehiculo_nombre': 'nombre',
             'Fecha_Limite_Entrega': 'deadline_str'
         }
+        # Solo renombramos si existen
         self.points.rename(columns=column_mapping, inplace=True)
 
         # 2. Configuración Física
@@ -36,17 +42,64 @@ class RouteSolver:
             self.start_time = datetime.now().replace(hour=8, minute=0, second=0, microsecond=0)
 
         # Calcular minutos de deadline relativos
-        self.points['deadline_minutos'] = self.points.apply(self._calculate_deadline_minutes, axis=1)
+        if 'deadline_str' in self.points.columns:
+            self.points['deadline_minutos'] = self.points.apply(self._calculate_deadline_minutes, axis=1)
+        else:
+            self.points['deadline_minutos'] = 99999999
 
         # Asegurar IDs
-        if 'id' not in self.points.columns: self.points['id'] = self.points.index 
-        if 'nombre' not in self.points.columns: self.points['nombre'] = "Cliente_" + self.points['id'].astype(str)
+        if 'id' not in self.points.columns: 
+            self.points['id'] = self.points.index 
+        
+        if 'nombre' not in self.points.columns: 
+            self.points['nombre'] = "Cliente_" + self.points['id'].astype(str)
         
         # 4. Matrices
         if self.n_points > 0:
             self.dist_matrix, self.time_matrix = self._calculate_matrices()
         else:
             self.dist_matrix, self.time_matrix = [], []
+
+    # ==========================================
+    # MÉTODO ESTÁTICO PUENTE (PARA EL CONTROLLER)
+    # ==========================================
+    @staticmethod
+    def solve_route(pedidos, velocidad_kmh, fecha_inicio=None):
+        """
+        Instancia la clase y devuelve la ruta formateada con datos originales.
+        """
+        if pedidos.empty:
+            return []
+            
+        # Instanciamos con la fecha de simulación
+        solver = RouteSolver(
+            pedidos, 
+            vehicle_speed_kmh=velocidad_kmh, 
+            start_date_str=fecha_inicio
+        )
+        
+        # Resolvemos (obtenemos IDs)
+        ruta_ids, _ = solver.solve()
+        
+        # Reconstruimos los datos completos buscando en el DF original
+        pedidos_dict = pedidos.to_dict('records')
+        # Mapeo seguro PedidoID -> Datos
+        id_to_data = {row.get('PedidoID'): row for row in pedidos_dict}
+        
+        ruta_ordenada_detallada = []
+        for rid in ruta_ids:
+            # Ojo: rid puede ser int o str, aseguramos coincidencia
+            if rid in id_to_data:
+                ruta_ordenada_detallada.append(id_to_data[rid])
+            else:
+                # Fallback por si acaso el ID era el índice antiguo
+                pass 
+        
+        return ruta_ordenada_detallada
+
+    # ==========================================
+    # LÓGICA INTERNA
+    # ==========================================
 
     def _calculate_deadline_minutes(self, row):
         try:
@@ -88,9 +141,6 @@ class RouteSolver:
         return dist, time
 
     def solve(self):
-        """
-        Retorna: (lista_ruta, lista_backlog_ids)
-        """
         if self.n_points <= 1: 
             return [], []
         return self._solve_long_haul_tachograph()
@@ -100,14 +150,11 @@ class RouteSolver:
         visited = [False] * self.n_points
         visited[0] = True
         
-        # Relojes
         accumulated_driving_time = 0 
         total_mission_time = 0       
         
-        # Mapeo inverso ID
         node_to_real_id = self.points['id'].to_dict()
-        if 'id' in self.points.columns: real_depot_id = self.points.iloc[0]['id']
-        else: real_depot_id = 0
+        real_depot_id = node_to_real_id[0]
         
         final_route_ids = [real_depot_id]
 
@@ -123,12 +170,10 @@ class RouteSolver:
                     sim_driving = accumulated_driving_time + driving_minutes
                     sim_total = total_mission_time + driving_minutes + 10 
                     
-                    # Regla Tacógrafo
                     if sim_driving > 480: 
-                        sim_total += 720 # +12h descanso
+                        sim_total += 720 
                         sim_driving = driving_minutes 
                     
-                    # Regla Caducidad
                     deadline = self.points.iloc[j]['deadline_minutos']
                     
                     if sim_total <= deadline:
@@ -145,15 +190,13 @@ class RouteSolver:
                 accumulated_driving_time = next_accum_driving
                 total_mission_time = next_total_time
             else:
-                # No podemos llegar a nadie más a tiempo
                 break
         
         final_route_ids.append(real_depot_id)
 
-        # --- DETECTAR QUIÉN SE QUEDÓ FUERA (BACKLOG REAL) ---
         backlog_ids = []
         for idx, fue_visitado in enumerate(visited):
-            if not fue_visitado and idx != 0: # Ignorar depósito
+            if not fue_visitado and idx != 0: 
                 real_id = node_to_real_id[idx]
                 backlog_ids.append(real_id)
 

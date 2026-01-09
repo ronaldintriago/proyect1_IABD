@@ -1,6 +1,4 @@
-from src.ui.streamlit_interface import streamlit_interface
-from src.controllers.main_controller import main_test_modelo
-from src.models.run_clustering_local import main_cluster
+from src.ui.streamlit_interface import main as streamlit_interface
 
 
 def main():
