@@ -8,7 +8,7 @@ logger = logging.getLogger(__name__)
 class DBConfig:
     SERVER = '10.0.40.12'
     PORT = '1433'
-    DATABASE = 'master'
+    DATABASE = 'BDIADelivery'
     USERNAME = 'sa'
     PASSWORD = 'Stucom.2025'
 

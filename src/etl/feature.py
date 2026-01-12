@@ -1,188 +1,73 @@
-import logging
 import pandas as pd
-from datetime import timedelta
 
-logger = logging.getLogger(__name__)
-
-
-class FeatureEngineer:
+class FeatureEngineering:
+    
     @staticmethod
-    def generar_dataset_maestro(dataframes):
-        """Genera el dataset maestro a partir de los DataFrames limpios.
+    def create_master_dataset(dfs):
+        print("\u001b[1;36m⚙️ Generando Dataset Maestro (Merges & Features)...\u001b[0m")
+        
+        try:
+            df_pedidos = dfs['Pedidos']
+            df_lineas = dfs['LineasPedido']
+            df_prod = dfs['Productos']
+            df_dest = dfs['Destinos']
+            
+            # --- CORRECCIÓN DE NOMBRES (NORMALIZACIÓN) ---
+            # Aseguramos que provinciaID sea ProvinciaID para que cuadre con todo
+            if 'provinciaID' in df_dest.columns:
+                df_dest.rename(columns={'provinciaID': 'ProvinciaID'}, inplace=True)
+            
+            # 1. Merge Pedidos + Lineas
+            df_master = pd.merge(df_pedidos, df_lineas, on='PedidoID', how='inner')
+            
+            # 2. Merge + Productos
+            df_master = pd.merge(df_master, df_prod, on='ProductoID', how='left')
+            
+            # 3. Calcular Pesos
+            if 'Peso' in df_master.columns:
+                df_master['Peso_Total_Kg'] = df_master['Cantidad'] * df_master['Peso']
+            else:
+                df_master['Peso_Total_Kg'] = df_master['Cantidad'] * 1.0 
 
-        Esta versión normaliza tipos (especialmente IDs de provincia) para evitar
-        errores de merge entre columnas object/int64.
-        """
-        # 1. Obtener DataFrames limpios
-        df_pedidos = dataframes["pedidos"]
-        df_lineas = dataframes["lineas_pedido"]
-        df_prod = dataframes["productos"]
-        df_dest = dataframes["destinos"]
-        df_prov = dataframes["provincias"]
+            # 4. Agrupar por Pedido
+            df_final = df_master.groupby('PedidoID').agg({
+                'Peso_Total_Kg': 'sum',
+                'DestinoEntregaID': 'first',
+                'FechaPedido': 'first',
+                'Caducidad': 'min'
+            }).reset_index()
+            
+            # 5. Merge + Destinos
+            # Aquí fallaba antes. Ahora estamos seguros de que DestinoID existe.
+            df_final = pd.merge(df_final, df_dest, left_on='DestinoEntregaID', right_on='DestinoID', how='left')
+            
+            # 6. GESTIÓN DE COORDENADAS (Desde Provincias_geo)
+            if 'Provincias_geo' in dfs:
+                df_geo = dfs['Provincias_geo']
+                
+                # Merge por ProvinciaID para asignar lat/lon aproximada
+                if 'ProvinciaID' in df_final.columns and 'ProvinciaID' in df_geo.columns:
+                    # Asegurar tipos iguales (string vs int)
+                    df_final['ProvinciaID'] = df_final['ProvinciaID'].astype(str).str.zfill(2)
+                    df_geo['ProvinciaID'] = df_geo['ProvinciaID'].astype(str).str.zfill(2)
+                    
+                    df_final = pd.merge(df_final, df_geo[['ProvinciaID', 'Latitud', 'Longitud']], on='ProvinciaID', how='left')
+            
+            # Limpieza final de coordenadas si vinieran en string
+            if 'coordenadas' in df_final.columns and 'Latitud' not in df_final.columns:
+                df_final[['Latitud', 'Longitud']] = df_final['coordenadas'].str.split(',', expand=True).astype(float)
+            
+            # 7. Calcular Fecha Límite
+            if 'FechaPedido' in df_final.columns and 'Caducidad' in df_final.columns:
+                df_final['FechaPedido'] = pd.to_datetime(df_final['FechaPedido'])
+                df_final['Fecha_Limite_Entrega'] = df_final['FechaPedido'] + pd.to_timedelta(df_final['Caducidad'], unit='D')
 
-        # Normalizaciones y validaciones previas
-        # Asegurar FechaPedido es datetime
-        if 'FechaPedido' in df_pedidos.columns:
-            df_pedidos['FechaPedido'] = pd.to_datetime(df_pedidos['FechaPedido'], errors='coerce')
-
-        # Coercionar IDs de provincia a numéricos para que merge no falle por tipos distintos
-        if 'provinciaID' in df_dest.columns:
-            df_dest['provinciaID'] = pd.to_numeric(df_dest['provinciaID'], errors='coerce')
-        if 'ProvinciaID' in df_prov.columns:
-            df_prov['ProvinciaID'] = pd.to_numeric(df_prov['ProvinciaID'], errors='coerce')
-
-        logger.info("ProvinciaID types: destinos=%s, provincias=%s",
-                    df_dest['provinciaID'].dtype if 'provinciaID' in df_dest.columns else 'n/a',
-                    df_prov['ProvinciaID'].dtype if 'ProvinciaID' in df_prov.columns else 'n/a')
-
-        # Asegurar que columnas numéricas de producto no contengan NaN
-        for col in ['TiempoFabricacionMedio', 'Caducidad']:
-            if col in df_prod.columns:
-                df_prod[col] = pd.to_numeric(df_prod[col], errors='coerce').fillna(0)
-
-        # 2. Enriquecer Líneas con Datos de Producto (Caducidad y Fabricación)
-        df_full_lines = pd.merge(
-            df_lineas,
-            df_prod[['ProductoID', 'TiempoFabricacionMedio', 'Caducidad']],
-            on='ProductoID',
-            how='left'
-        )
-
-        # Unir con Pedidos para tener la fecha de referencia
-        df_full_lines = pd.merge(
-            df_full_lines,
-            df_pedidos[['PedidoID', 'FechaPedido']],
-            on='PedidoID',
-            how='left'
-        )
-
-        # 3. Calcular Fechas Límites por Línea (protegido contra valores nulos)
-        def calc_fecha_limite(row):
-            fecha = row.get('FechaPedido')
-            if pd.isna(fecha):
-                return pd.NaT
-            tf = row.get('TiempoFabricacionMedio', 0) or 0
-            cad = row.get('Caducidad', 0) or 0
-            try:
-                dias = int(tf + cad)
-            except Exception:
-                dias = 0
-            return fecha + timedelta(days=dias)
-
-        df_full_lines['Fecha_Limite_Item'] = df_full_lines.apply(calc_fecha_limite, axis=1)
-
-        # 4. AGRUPACIÓN (Colapsar líneas en Pedidos Únicos)
-        df_maestro = df_full_lines.groupby('PedidoID').agg({
-            'Cantidad': 'sum',
-            'Fecha_Limite_Item': 'min',
-            'FechaPedido': 'first'
-        }).reset_index()
-
-        df_maestro.rename(columns={
-            'Cantidad': 'Peso_Total_Kg',
-            'Fecha_Limite_Item': 'Fecha_Limite_Entrega'
-        }, inplace=True)
-
-        # 5. Unir con Destinos y Provincias
-        df_maestro = pd.merge(
-            df_maestro,
-            df_pedidos[['PedidoID', 'DestinoEntregaID']],
-            on='PedidoID',
-            how='left'
-        )
-
-        df_maestro = pd.merge(
-            df_maestro,
-            df_dest,
-            left_on='DestinoEntregaID',
-            right_on='DestinoID',
-            how='left'
-        )
-
-        # Merge con provincias usando claves numéricas ya coercionadas
-        df_maestro = pd.merge(
-            df_maestro,
-            df_prov,
-            left_on='provinciaID',
-            right_on='ProvinciaID',
-            how='left'
-        )
-
-        # 6. LIMPIEZA FINAL DE COLUMNAS (verificar que existan)
-        cols_necesarias = [
-            'PedidoID',
-            'Peso_Total_Kg',
-            'Fecha_Limite_Entrega',
-            'nombre_completo',
-            'distancia_km',
-            'coordenadas_gps'
-        ]
-
-        # Filtrar solo columnas existentes de forma segura
-        cols_presentes = [c for c in cols_necesarias if c in df_maestro.columns]
-        missing = set(cols_necesarias) - set(cols_presentes)
-        if missing:
-            logger.warning("Faltan columnas esperadas en df_maestro: %s", missing)
-
-        # Añadir columna 'coordenadas' combinada: preferimos coordenadas_gps si existe,
-        # luego Latitud/Longitud de provincias y finalmente None.
-        def parse_gps(val):
-            if pd.isna(val):
-                return None
-            try:
-                s = str(val).strip().replace('(', '').replace(')', '')
-                parts = [p.strip() for p in s.split(',')]
-                if len(parts) >= 2:
-                    lat = float(parts[0])
-                    lon = float(parts[1])
-                    return (lat, lon)
-            except Exception:
-                return None
+            print(f"✅ Dataset Maestro creado: {len(df_final)} pedidos.")
+            return df_final
+            
+        except KeyError as e:
+            print(f"❌ Error en Merges: Falta columna/tabla {e}")
+            # Importante: Imprimir columnas disponibles para depurar
+            if 'Destinos' in dfs:
+                print(f"   Columnas en Destinos: {dfs['Destinos'].columns.tolist()}")
             return None
-
-        # start with None
-        df_maestro['coordenadas'] = None
-
-        # If coordenadas_gps column exists, try to parse
-        if 'coordenadas_gps' in df_maestro.columns:
-            df_maestro['coordenadas'] = df_maestro['coordenadas_gps'].apply(parse_gps)
-
-        # Where still None, try Latitud/Longitud
-        if 'Latitud' in df_maestro.columns and 'Longitud' in df_maestro.columns:
-            mask_missing = df_maestro['coordenadas'].isna()
-            df_maestro.loc[mask_missing, 'coordenadas'] = df_maestro.loc[mask_missing].apply(
-                lambda r: (float(r['Latitud']), float(r['Longitud'])) if (pd.notna(r['Latitud']) and pd.notna(r['Longitud'])) else None,
-                axis=1
-            )
-
-        filled = df_maestro['coordenadas'].notna().sum()
-        logger.info("Coordenadas asignadas en df_maestro: %d/%d", filled, len(df_maestro))
-
-        # Separar coordenadas en Latitud y Longitud
-        def get_lat(c):
-            try:
-                return float(c[0])
-            except Exception:
-                return None
-
-        def get_lon(c):
-            try:
-                return float(c[1])
-            except Exception:
-                return None
-
-        df_maestro['Latitud'] = df_maestro['coordenadas'].apply(get_lat)
-        df_maestro['Longitud'] = df_maestro['coordenadas'].apply(get_lon)
-
-        lat_filled = df_maestro['Latitud'].notna().sum()
-        lon_filled = df_maestro['Longitud'].notna().sum()
-        logger.info("Latitud/Longitud asignadas en df_maestro: %d/%d, %d/%d", lat_filled, len(df_maestro), lon_filled, len(df_maestro))
-
-        # No devolver la columna tupla 'coordenadas'; asegurar Latitud/Longitud en la salida
-        if 'coordenadas' in cols_presentes:
-            cols_presentes.remove('coordenadas')
-        for c in ['Latitud', 'Longitud']:
-            if c not in cols_presentes:
-                cols_presentes.append(c)
-
-        return df_maestro[cols_presentes]
