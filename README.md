@@ -18,7 +18,7 @@ Para mantener este archivo limpio, la documentación técnica detallada se encue
 * 🏗️ **[Arquitectura](docs/ARCHITECTURE.md):** Flujo de datos, stack tecnológico y patrones.
 * 🧠 **[Lógica Algorítmica](docs/LOGIC.md):** Explicación del Clustering y el simulador de Tacógrafo.
 * 📊 **[Resultados](docs/RESULTS.md):** Interpretación de métricas y dashboard.
-* 📖 **[Manual de Usuario](docs/USER_GUIDE.md):** Guía paso a paso para usar la aplicación.
+
 
 ---
 
