@@ -30,11 +30,7 @@ Para mantener este archivo limpio, la documentación técnica detallada se encue
 
 ### Ejecución
 ```bash
-
-Este proyecto utiliza **[uv](https://github.com/astral-sh/uv)** para una gestión de dependencias ultrarrápida.
-
-### 1️⃣ Instalación
-
+# Pasos a seguir para usar el proyecto
 Clona el repositorio e instala las dependencias:
 
 ```bash
