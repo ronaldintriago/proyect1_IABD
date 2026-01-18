@@ -68,7 +68,6 @@ class ClusteringRunner:
         ideal_details, ideal_cost = service.run_optimal_clustering()
         
         # 2. Traducir "Detalles de Ruta" a "Conteo de Flota" para poder re-ejecutar
-        # Ejemplo: ideal_details nos dice "Ruta 1: Trailer", "Ruta 2: Trailer".
         # Generamos: {4: 2} (ID del Trailer: Cantidad)
         
         # Mapa inverso: Nombre -> ID
@@ -93,7 +92,7 @@ class ClusteringRunner:
         return {
             "mode": "optimal",
             "accepted_df": df_acc,
-            "discarded_df": df_disc, # Debería estar vacío si es óptima
+            "discarded_df": df_disc,
             "metrics": {"cost": cost},
             "details": details,
             "fleet_used": optimal_fleet_config

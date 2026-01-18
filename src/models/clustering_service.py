@@ -93,7 +93,6 @@ class ClusteringService:
                 cost_eur, dist_km = self._calculate_estimated_cost(cluster_data, v_id)
                 current_solution_cost += cost_eur
                 
-                # Guardamos detalle de ESTA ruta candidata
                 current_iteration_details.append({
                     'cluster_id': cid + 1,
                     'vehiculo': v_name,
@@ -105,13 +104,11 @@ class ClusteringService:
             
             if feasible and current_solution_cost < min_total_cost:
                 min_total_cost = current_solution_cost
-                best_solution_details = current_iteration_details # Guardamos la mejor configuración completa
+                best_solution_details = current_iteration_details
         
         return best_solution_details, min_total_cost
 
     def run_user_fleet_clustering(self, user_fleet_counts):
-        # ... (CÓDIGO IGUAL QUE ANTES, SIN CAMBIOS EN LÓGICA) ...
-        # Solo lo pego resumido para contexto, asegúrate de mantener tu lógica de asignación
         
         available_vehicles = []
         for v_id, count in user_fleet_counts.items():
@@ -139,7 +136,7 @@ class ClusteringService:
         df_discarded_list = []
         total_cost_user = 0
         
-        used_routes_details = [] # Nuevo: Para guardar resumen fácil
+        used_routes_details = [] 
 
         for i, (cluster_id, total_weight) in enumerate(cluster_weights.items()):
             if i < len(vehicle_objs):
@@ -226,7 +223,6 @@ class ClusteringService:
             ocupacion = (r['peso'] / r['capacidad_max']) * 100
             print(f"   #{r['cluster_id']:<4} | {r['vehiculo']:<20} | {r['peso']:<6.0f}/{r['capacidad_max']:<5} | {r['paradas']:<8} | {ocupacion:.1f}%")
             
-            # Contar para resumen final
             fleet_counts[r['vehiculo']] = fleet_counts.get(r['vehiculo'], 0) + 1
 
         print("="*80)

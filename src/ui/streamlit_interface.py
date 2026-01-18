@@ -21,23 +21,23 @@ st.set_page_config(page_title="IA Delivery Dashboard", page_icon="🚛", layout=
 # ==============================================================================
 
 def mostrar_pantalla_inicio():
-    st.markdown("<h1 style='text-align: center;'>🚛 IA Delivery System</h1>", unsafe_allow_html=True)
+    st.markdown("<h1 style='text-align: center;'>IA Delivery System</h1>", unsafe_allow_html=True)
     st.markdown("<h3 style='text-align: center; color: gray;'>Configuración de Datos de Entrada</h3>", unsafe_allow_html=True)
     st.write("---")
     
     col1, col2 = st.columns(2)
     
     with col1:
-        st.info("📡 **Conexión Empresarial**")
+        st.info("**Conexión Empresarial**")
         st.write("Conectar directamente al servidor SQL Server configurado.")
-        if st.button("🔌 Conectar a BBDD", use_container_width=True, type="primary"):
+        if st.button("Conectar a BBDD", use_container_width=True, type="primary"):
             st.session_state['modo_carga'] = 'sql'
             st.session_state['archivos_subidos'] = None
             st.session_state['page'] = 'loading'
             st.rerun()
 
     with col2:
-        st.warning("📂 **Carga Manual (Testing)**")
+        st.warning("**Carga Manual (Testing)**")
         st.write("Sube tus propios CSVs para simular nuevos escenarios.")
         
         with st.expander("Subir Archivos CSV", expanded=True):
@@ -54,7 +54,7 @@ def mostrar_pantalla_inicio():
             f_prov = st.file_uploader("Provincias.csv", type=['csv'], key='prov')
             if f_prov: uploaded_files['Provincias'] = f_prov
             
-            if st.button("🚀 Procesar Archivos", disabled=not all_present, use_container_width=True):
+            if st.button("Procesar Archivos", disabled=not all_present, use_container_width=True):
                 st.session_state['modo_carga'] = 'manual_upload'
                 st.session_state['archivos_subidos'] = uploaded_files
                 st.session_state['page'] = 'loading'
@@ -63,7 +63,7 @@ def mostrar_pantalla_inicio():
 def mostrar_pantalla_carga():
     st.empty()
     st.markdown("<br><br><br>", unsafe_allow_html=True)
-    st.markdown("<h2 style='text-align: center;'>⚙️ Procesando Datos...</h2>", unsafe_allow_html=True)
+    st.markdown("<h2 style='text-align: center;'>Procesando Datos...</h2>", unsafe_allow_html=True)
     bar = st.progress(0); status = st.empty()
     
     status.text("Analizando archivos..."); time.sleep(0.5); bar.progress(10)
@@ -92,16 +92,16 @@ def mostrar_pantalla_carga():
 def mostrar_dashboard():
     # HEADER
     c1, c2 = st.columns([1, 10])
-    c1.title("🚛")
+    c1.title("IA DELIVERY SL")
     c2.title("Panel de Control Logístico")
-    c2.caption(f"📅 Fecha: {SIMULATION_START_DATE} | 🌐 Modo: {st.session_state.get('modo_carga', 'UNK').upper()}")
+    c2.caption(f"Fecha: {SIMULATION_START_DATE} | Modo: {st.session_state.get('modo_carga', 'UNK').upper()}")
 
     state = st.session_state['app_state']
     
     # SIDEBAR
     with st.sidebar:
-        st.header("⚙️ Flota")
-        if st.button("🏠 Reiniciar", use_container_width=True):
+        st.header("Flota")
+        if st.button("Reiniciar", use_container_width=True):
             for k in list(st.session_state.keys()): del st.session_state[k]
             st.session_state['page'] = 'inicio'; st.rerun()
         st.divider()
@@ -111,7 +111,7 @@ def mostrar_dashboard():
         for vid, specs in FLEET_CONFIG.items():
             new_input[vid] = st.number_input(f"{specs['nombre']}", value=int(current.get(vid, 0)), min_value=0)
             
-        if st.button("🔄 Recalcular", type="primary", use_container_width=True):
+        if st.button("Recalcular", type="primary", use_container_width=True):
             res = LogisticsController.recalcular_con_flota_manual(new_input)
             st.session_state['app_state'] = res
             st.session_state['fleet_config_ui'] = new_input
@@ -119,7 +119,7 @@ def mostrar_dashboard():
 
     render_metrics(state.get('clustering', {}))
     
-    tab1, tab2, tab3 = st.tabs(["🗺️ Mapa", "📋 Datos", "🔎 Auditoría"])
+    tab1, tab2, tab3 = st.tabs(["Mapa", "Datos", "Auditoría"])
 
     with tab1:
         if state.get('rutas'):
@@ -140,7 +140,7 @@ def mostrar_dashboard():
             if di is not None: st.dataframe(di[['PedidoID', 'nombre_completo']], use_container_width=True, hide_index=True)
 
     with tab3:
-        st.header("🧠 Auditoría")
+        st.header("Auditoría")
         rutas = state.get('rutas', [])
         if rutas:
             st.subheader("Zonas (Clustering)")

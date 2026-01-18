@@ -14,7 +14,7 @@ class AuditPlotter:
                 puntos_cluster.append({
                     'Latitud': p.get('Latitud'),
                     'Longitud': p.get('Longitud'),
-                    'Zona': f"C{r['cluster_id']} ({r['vehiculo']})", # Etiqueta más corta
+                    'Zona': f"C{r['cluster_id']} ({r['vehiculo']})",
                     'Cliente': p.get('nombre_completo')
                 })
         

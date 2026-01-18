@@ -42,7 +42,7 @@ class FeatureEngineering:
             
             # --- 3. GEOCODING HÍBRIDO (Cache + Internet) ---
             
-            # A) Usar caché local (rápido)
+            # Usar caché local (rápido)
             if 'Provincias_geo' in dfs:
                 df_geo = dfs['Provincias_geo']
                 df_geo['ProvinciaID'] = df_geo['ProvinciaID'].astype(str).str.replace(r'\.0$', '', regex=True).str.zfill(2)
@@ -51,7 +51,7 @@ class FeatureEngineering:
                 df_final['Latitud'] = None
                 df_final['Longitud'] = None
 
-            # B) Buscar faltantes en Internet (Geocoding)
+            # Buscar faltantes en Internet (Geocoding)
             missing = df_final['Latitud'].isna()
             num_missing = missing.sum()
             
@@ -93,7 +93,7 @@ class FeatureEngineering:
             # Limpieza final
             if 'nombre_new' in df_final.columns: df_final.drop(columns=['nombre_new'], inplace=True)
             
-            # C) Fechas
+            # Fechas
             if 'FechaPedido' in df_final.columns:
                 df_final['FechaPedido'] = pd.to_datetime(df_final['FechaPedido'])
                 df_final['Fecha_Limite_Entrega'] = df_final['FechaPedido'] + pd.to_timedelta(df_final['Caducidad'], unit='D')
