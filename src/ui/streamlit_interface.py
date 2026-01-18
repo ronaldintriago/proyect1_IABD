@@ -92,7 +92,6 @@ def mostrar_pantalla_carga():
 def mostrar_dashboard():
     # HEADER
     c1, c2 = st.columns([1, 10])
-    c1.title("IA DELIVERY SL")
     c2.title("Panel de Control Logístico")
     c2.caption(f"Fecha: {SIMULATION_START_DATE} | Modo: {st.session_state.get('modo_carga', 'UNK').upper()}")
 
