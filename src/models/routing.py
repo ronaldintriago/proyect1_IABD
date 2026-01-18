@@ -42,9 +42,7 @@ class RouteSolver:
         else:
             self.dist_matrix, self.time_matrix = [], []
 
-    # ... (MANTÉN _calculate_deadline_minutes, _haversine Y _calculate_matrices IGUAL QUE ANTES) ...
     def _calculate_deadline_minutes(self, row):
-        # (Copia tu código anterior aquí)
         try:
             if str(row.get('id')) == "0" or row.get('nombre') == "CENTRAL": return 99999999
             dt = pd.to_datetime(row['deadline_str'])
@@ -52,7 +50,6 @@ class RouteSolver:
         except: return 99999999
 
     def _haversine(self, lat1, lon1, lat2, lon2):
-        # (Copia tu código anterior aquí)
         R = 6371
         try:
             dlat = radians(lat2 - lat1); dlon = radians(lon2 - lon1)
@@ -61,7 +58,6 @@ class RouteSolver:
         except: return 0 
 
     def _calculate_matrices(self):
-        # (Copia tu código anterior aquí)
         dist = np.zeros((self.n_points, self.n_points))
         time = np.zeros((self.n_points, self.n_points))
         coords = self.points[['lat', 'lon']].values
@@ -89,12 +85,12 @@ class RouteSolver:
         pedidos_dict = pedidos.to_dict('records')
         id_to_data = {row.get('PedidoID'): row for row in pedidos_dict}
         
-        # 1. Ruta Final Detallada
+        # Ruta Final Detallada
         ruta_final = []
         for rid in ruta_ids:
             if rid in id_to_data: ruta_final.append(id_to_data[rid])
             
-        # 2. Historial Detallado (Para la animación)
+        # Historial Detallado (Para la animación)
         # Convertimos [[id1], [id1, id2]...] a objetos completos
         history_detailed = []
         for step_idx, step_ids in enumerate(history_steps):
@@ -102,7 +98,7 @@ class RouteSolver:
             for rid in step_ids:
                 if rid in id_to_data:
                     d = id_to_data[rid].copy()
-                    d['step_index'] = step_idx # Para saber en qué frame de la animación va
+                    d['step_index'] = step_idx
                     step_data.append(d)
             history_detailed.extend(step_data)
             
@@ -124,7 +120,7 @@ class RouteSolver:
         
         final_route_ids = [real_depot_id]
         
-        # --- NUEVO: Historial de Pasos ---
+        # --- Historial de Pasos ---
         history = []
         # Paso 0: Solo el depósito
         history.append([real_depot_id]) 
@@ -157,13 +153,13 @@ class RouteSolver:
                 accum_driving = next_accum_drv
                 total_mission = next_total_time
                 
-                # --- NUEVO: Guardamos la foto del momento ---
+                # --- Guardamos la foto del momento ---
                 history.append(list(final_route_ids))
             else:
                 break
         
         final_route_ids.append(real_depot_id)
-        # Último paso: Vuelta a casa
+        # Vuelta a casa
         history.append(list(final_route_ids))
 
         backlog = [node_to_real_id[i] for i, v in enumerate(visited) if not v and i != 0]

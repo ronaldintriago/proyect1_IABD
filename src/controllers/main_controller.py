@@ -3,7 +3,6 @@ import sys
 import os
 from tqdm import tqdm
 
-# Ajuste de path para que Python encuentre los módulos
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..')))
 
 from src.etl.db_loader import DataLoader
@@ -38,7 +37,7 @@ class LogisticsController:
         elif modo_carga == 'sql':
             dfs_raw = DataLoader.load_from_sql()
             
-        else: # Default: Carga de CSVs locales (legacy/testing)
+        else:
             dfs_raw = DataLoader.load_from_csv()
             
         if not dfs_raw:
@@ -112,10 +111,10 @@ class LogisticsController:
             
             # Obtenemos info del vehículo asignado a este cluster
             vid = subset['tipoVehiculo_id'].iloc[0]
-            v_specs = FLEET_CONFIG.get(vid, FLEET_CONFIG[1]) # Fallback seguro
+            v_specs = FLEET_CONFIG.get(vid, FLEET_CONFIG[1])
             
             try:
-                # Llamada al motor de routing (Ahora devuelve 2 valores: ruta + historial)
+                # Llamada al motor de routing
                 ruta, historial = RouteSolver.solve_route(
                     pedidos=subset,
                     velocidad_kmh=v_specs['velocidad_media_kmh'],
@@ -128,8 +127,8 @@ class LogisticsController:
                         "vehiculo": v_specs['nombre'],
                         "ruta": ruta,
                         "carga": subset['Peso_Total_Kg'].sum(),
-                        "audit_history": historial,  # <--- CLAVE PARA LA ANIMACIÓN
-                        "coste": 0  # El coste detallado ya viene en el clustering, esto es extra
+                        "audit_history": historial,
+                        "coste": 0
                     })
             except Exception as e:
                 print(f"[WARN] Error ruteando cluster {cid}: {e}")

@@ -33,7 +33,7 @@ def get_full_route_geometry(waypoints):
                 # OSRM devuelve [lon, lat], convertimos a [lat, lon]
                 return [[p[1], p[0]] for p in geometry]
     except Exception:
-        pass # Fallback a línea recta si falla la API
+        pass
 
     return waypoints
 
