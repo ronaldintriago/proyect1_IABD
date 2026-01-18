@@ -3,3 +3,7 @@ __pycache__/
 
 #IDE
 .idea
+data/processed/dataset_clustered.csv
+data/processed/pedidos_descartados.csv
+pyproject.toml
+

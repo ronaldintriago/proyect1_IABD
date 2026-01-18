@@ -1,177 +1,167 @@
-import pulp
 import pandas as pd
 import numpy as np
 from math import radians, cos, sin, asin, sqrt
+from datetime import datetime, timedelta
 
 class RouteSolver:
-    def __init__(self, df_pedidos, vehicle_speed_kmh=50, max_hours=8):
-        """
-        df_pedidos: DataFrame con columnas [id, lat, lon, deadline_minutos]
-                    (La fila 0 debe ser el DEPÓSITO)
-        """
-        self.points = df_pedidos
-        self.n_points = len(df_pedidos)
-        self.nodes = range(self.n_points)
-        self.speed_km_min = vehicle_speed_kmh / 60.0  # Km por minuto
-        self.max_minutes = max_hours * 60
+    def __init__(self, df_pedidos, vehicle_speed_kmh=50, max_hours=None, start_date_str=None):
+        self.points = df_pedidos.copy()
+        self.points.reset_index(drop=True, inplace=True)
         
-        # Pre-calcular matrices
-        self.dist_matrix, self.time_matrix = self._calculate_matrices()
+        column_mapping = {
+            'PedidoID': 'id',
+            'Latitud': 'lat',
+            'Longitud': 'lon',
+            'vehiculo_nombre': 'nombre',
+            'Fecha_Limite_Entrega': 'deadline_str'
+        }
+        self.points.rename(columns=column_mapping, inplace=True)
+
+        self.n_points = len(self.points)
+        self.speed_km_min = vehicle_speed_kmh / 60.0 
+
+        if start_date_str:
+            try:
+                base_date = pd.to_datetime(start_date_str)
+                self.start_time = base_date.replace(hour=8, minute=0, second=0, microsecond=0)
+            except:
+                self.start_time = datetime.now().replace(hour=8, minute=0, second=0, microsecond=0)
+        else:
+            self.start_time = datetime.now().replace(hour=8, minute=0, second=0, microsecond=0)
+
+        if 'deadline_str' in self.points.columns:
+            self.points['deadline_minutos'] = self.points.apply(self._calculate_deadline_minutes, axis=1)
+        else:
+            self.points['deadline_minutos'] = 99999999
+
+        if 'id' not in self.points.columns: self.points['id'] = self.points.index 
+        if 'nombre' not in self.points.columns: self.points['nombre'] = "Cliente_" + self.points['id'].astype(str)
+        
+        if self.n_points > 0:
+            self.dist_matrix, self.time_matrix = self._calculate_matrices()
+        else:
+            self.dist_matrix, self.time_matrix = [], []
+
+    def _calculate_deadline_minutes(self, row):
+        try:
+            if str(row.get('id')) == "0" or row.get('nombre') == "CENTRAL": return 99999999
+            dt = pd.to_datetime(row['deadline_str'])
+            return (dt - self.start_time).total_seconds() / 60.0
+        except: return 99999999
 
     def _haversine(self, lat1, lon1, lat2, lon2):
-        """Calcula distancia en Km entre dos coordenadas"""
-        R = 6371  # Radio tierra km
-        dlat = radians(lat2 - lat1)
-        dlon = radians(lon2 - lon1)
-        a = sin(dlat/2)**2 + cos(radians(lat1)) * cos(radians(lat2)) * sin(dlon/2)**2
-        c = 2 * asin(sqrt(a))
-        return R * c
+        R = 6371
+        try:
+            dlat = radians(lat2 - lat1); dlon = radians(lon2 - lon1)
+            a = sin(dlat/2)**2 + cos(radians(lat1)) * cos(radians(lat2)) * sin(dlon/2)**2
+            return R * 2 * asin(sqrt(a))
+        except: return 0 
 
     def _calculate_matrices(self):
-        """Genera matriz NxN de distancias y tiempos"""
         dist = np.zeros((self.n_points, self.n_points))
         time = np.zeros((self.n_points, self.n_points))
-        
         coords = self.points[['lat', 'lon']].values
-        
         for i in range(self.n_points):
             for j in range(self.n_points):
                 if i != j:
-                    d = self._haversine(coords[i][0], coords[i][1], 
-                                      coords[j][0], coords[j][1])
+                    d = self._haversine(coords[i][0], coords[i][1], coords[j][0], coords[j][1])
                     dist[i][j] = d
-                    # Tiempo = Distancia / Velocidad
-                    time[i][j] = d / self.speed_km_min
+                    if self.speed_km_min > 0: time[i][j] = d / self.speed_km_min
         return dist, time
 
+    @staticmethod
+    def solve_route(pedidos, velocidad_kmh, fecha_inicio=None):
+        """
+        Retorna: (ruta_detallada, historial_pasos)
+        """
+        if pedidos.empty: return [], []
+            
+        solver = RouteSolver(pedidos, vehicle_speed_kmh=velocidad_kmh, start_date_str=fecha_inicio)
+        
+        # Obtenemos ruta final IDs y el historial de pasos
+        ruta_ids, _, history_steps = solver.solve()
+        
+        # Reconstrucción de datos
+        pedidos_dict = pedidos.to_dict('records')
+        id_to_data = {row.get('PedidoID'): row for row in pedidos_dict}
+        
+        # Ruta Final Detallada
+        ruta_final = []
+        for rid in ruta_ids:
+            if rid in id_to_data: ruta_final.append(id_to_data[rid])
+            
+        # Historial Detallado (Para la animación)
+        # Convertimos [[id1], [id1, id2]...] a objetos completos
+        history_detailed = []
+        for step_idx, step_ids in enumerate(history_steps):
+            step_data = []
+            for rid in step_ids:
+                if rid in id_to_data:
+                    d = id_to_data[rid].copy()
+                    d['step_index'] = step_idx
+                    step_data.append(d)
+            history_detailed.extend(step_data)
+            
+        return ruta_final, history_detailed
+
     def solve(self):
-        # --- 0. SAFETY CHECK: Validación de Capacidad ---
-        # Sumamos la columna 'cantidad' de todos los pedidos (menos el depósito)
-        total_carga = self.points['cantidad'].sum()
+        if self.n_points <= 1: return [], [], []
+        return self._solve_long_haul_tachograph()
+
+    def _solve_long_haul_tachograph(self):
+        current_node = 0
+        visited = [False] * self.n_points
+        visited[0] = True
         
-        # Necesitas tener self.vehicle_capacity_kg guardado en el __init__
-        if total_carga > self.vehicle_capacity_kg:
-            print(f"❌ ERROR CRÍTICO: El clúster excede la capacidad.")
-            print(f"   Carga: {total_carga} Kg > Máx: {self.vehicle_capacity_kg} Kg")
-            return None # Rechazamos el grupo sin gastar tiempo de cálculo
-        # -----------------------------------------------
-        print(f"🔄 Calculando ruta para {self.n_points - 1} pedidos...")
+        accum_driving = 0; total_mission = 0
         
-        # 1. Definir Problema
-        prob = pulp.LpProblem("VRP_Routing_Test", pulp.LpMinimize)
-
-        # 2. Variables
-        # x[i][j] = 1 si viaja de i a j
-        x = pulp.LpVariable.dicts("x", (self.nodes, self.nodes), cat='Binary')
-        # t[i] = tiempo de llegada al nodo i
-        t = pulp.LpVariable.dicts("t", self.nodes, lowBound=0, upBound=self.max_minutes)
-        # Fijar el tiempo de inicio en el depósito a 0
-        prob += t[0] == 0
-
-        # 3. Función Objetivo: Minimizar Distancia Total
-        prob += pulp.lpSum([self.dist_matrix[i][j] * x[i][j] for i in self.nodes for j in self.nodes if i != j])
-
-        # 4. Restricciones
+        node_to_real_id = self.points['id'].to_dict()
+        real_depot_id = node_to_real_id[0]
         
-        # 4.1. Visitar cada cliente exactamente una vez (entrar y salir)
-        for i in range(1, self.n_points): 
-            prob += pulp.lpSum([x[j][i] for j in self.nodes if i != j]) == 1
-            prob += pulp.lpSum([x[i][j] for j in self.nodes if i != j]) == 1
+        final_route_ids = [real_depot_id]
+        
+        # --- Historial de Pasos ---
+        history = []
+        # Paso 0: Solo el depósito
+        history.append([real_depot_id]) 
 
-        # 4.2. Salir y volver al Depósito (0)
-        prob += pulp.lpSum([x[0][j] for j in range(1, self.n_points)]) == 1
-        prob += pulp.lpSum([x[i][0] for i in range(1, self.n_points)]) == 1
-
-        # 4.3. Continuidad temporal y Eliminación de Subtours (MTZ constraint)
-        M = 10000 
-        for i in self.nodes:
-            for j in range(1, self.n_points): # j=1..N (clientes)
-                if i != j:
-                    travel_t = self.time_matrix[i][j]
-                    service_t = 10 # Tiempo fijo descarga (minutos)
+        for _ in range(self.n_points - 1):
+            best_next = -1; min_dist = float('inf')
+            next_accum_drv = 0; next_total_time = 0
+            
+            for j in range(1, self.n_points):
+                if not visited[j]:
+                    d_km = self.dist_matrix[current_node][j]
+                    t_min = self.time_matrix[current_node][j]
                     
-                    # Si voy de i -> j, entonces t[j] >= t[i] + viaje + servicio
-                    prob += t[j] >= t[i] + service_t + travel_t - M*(1-x[i][j])
-
-        # 4.4. Ventanas de Tiempo (Caducidad)
-        for i in range(1, self.n_points):
-            deadline = self.points.iloc[i]['deadline_minutos']
-            prob += t[i] <= deadline
-
-        # 5. Resolver (usando solver gratuito CBC incluido en PuLP)
-        # Ocultamos el log del solver con msg=False
-        prob.solve(pulp.PULP_CBC_CMD(msg=False))
-
-        # 6. Mostrar Resultados
-        status = pulp.LpStatus[prob.status]
-        print(f"✅ Estado de la Solución: {status}")
-        
-        if status == 'Optimal':
-            return self._reconstruct_route(x, t)
-        else:
-            print("❌ No se encontró solución válida (probablemente por tiempos).")
-            return None
-
-    def _reconstruct_route(self, x, t):
-        route_ids = [0]
-        curr = 0
-        total_dist = 0
-        print("\n--- 🚛 RUTA ÓPTIMA ---")
-        
-        while True:
-            # Buscar a dónde vamos desde 'curr'
-            next_node = None
-            for j in self.nodes:
-                if curr != j and pulp.value(x[curr][j]) == 1:
-                    next_node = j
-                    break
+                    sim_drv = accum_driving + t_min
+                    sim_tot = total_mission + t_min + 10 
+                    
+                    if sim_drv > 480: 
+                        sim_tot += 720; sim_drv = t_min 
+                    
+                    if sim_tot <= self.points.iloc[j]['deadline_minutos']:
+                        if d_km < min_dist:
+                            min_dist = d_km; best_next = j
+                            next_accum_drv = sim_drv; next_total_time = sim_tot
             
-            if next_node is None: break
-            
-            # Datos para imprimir
-            arrival_time = pulp.value(t[next_node]) if next_node != 0 else 0
-            dist_tramo = self.dist_matrix[curr][next_node]
-            total_dist += dist_tramo
-            name = self.points.iloc[next_node]['nombre']
-            
-            if next_node != 0:
-                deadline = self.points.iloc[next_node]['deadline_minutos']
-                print(f" -> {name} (Llegada: min {arrival_time:.1f} / Deadline: {deadline}) [Ok]")
-                route_ids.append(next_node)
-                curr = next_node
-            else:
-                print(f" -> 🏁 VUELTA A CENTRAL (Distancia total: {total_dist:.2f} km)")
-                route_ids.append(0)
-                break
+            if best_next != -1:
+                visited[best_next] = True
+                real_next_id = node_to_real_id[best_next]
+                final_route_ids.append(real_next_id)
+                current_node = best_next
+                accum_driving = next_accum_drv
+                total_mission = next_total_time
                 
-        return route_ids
-
-# --- BLOQUE DE EJECUCIÓN  ---
-if __name__ == "__main__":
-    try:
-        # 1. Carga robusta: detecta automáticamente si es ',' o ';'
-        df = pd.read_csv("test_clustering.csv", sep=None, engine='python')
+                # --- Guardamos la foto del momento ---
+                history.append(list(final_route_ids))
+            else:
+                break
         
-        # 2. Limpieza de nombres de columna (quita espacios extra si los hay)
-        df.columns = df.columns.str.strip()
+        final_route_ids.append(real_depot_id)
+        # Vuelta a casa
+        history.append(list(final_route_ids))
 
-        # 3. Verificación de seguridad
-        required_cols = {'id', 'nombre', 'deadline_minutos', 'lat', 'lon'}
-        if not required_cols.issubset(df.columns):
-            print(f"❌ Error de Columnas. Se esperaban: {required_cols}")
-            print(f"   Se encontraron: {df.columns.tolist()}")
-            # Intento de arreglo rápido si los nombres difieren por mayúsculas
-            df.columns = df.columns.str.lower()
-        
-        print("📂 Datos cargados correctamente:")
-        print(df[['id', 'nombre', 'deadline_minutos']].head())
-        print("-" * 30)
+        backlog = [node_to_real_id[i] for i, v in enumerate(visited) if not v and i != 0]
 
-        # Inicializar y Resolver
-        solver = RouteSolver(df, vehicle_speed_kmh=60, max_hours=8)
-        ruta = solver.solve()
-        
-    except FileNotFoundError:
-        print("⚠️ Error: No encuentro 'test_pedidos.csv'. Asegúrate de que está en la misma carpeta.")
-    except Exception as e:
-        print(f"⚠️ Error inesperado: {e}")
+        return final_route_ids, backlog, history

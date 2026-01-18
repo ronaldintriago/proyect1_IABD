@@ -1,123 +1,170 @@
 import streamlit as st
-import pandas as pd
-import seaborn as sns
-import matplotlib.pyplot as plt
-import numpy as np
+import time
 import sys
 import os
-from src.controllers.main_controller import LogisticsController
+import pandas as pd
+from streamlit_folium import st_folium
+import plotly.express as px
 
-# Ajuste de path para importar módulos desde src
+# Ajuste de path
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..')))
 
-# Importamos el Loader (asegúrate de que el archivo en 'data' se llame 'db_loader.py' como en tu captura)
-from src.data.db_loader import DataLoader
-from src.data.feature import FeatureEngineer
-import logging
+from src.controllers.main_controller import LogisticsController
+from src.config.fleet_config import FLEET_CONFIG, SIMULATION_START_DATE
+from src.utils.map_renderer import create_interactive_map
+from src.utils.plot_renderer import AuditPlotter
 
-logger = logging.getLogger(__name__)
+st.set_page_config(page_title="IA Delivery Dashboard", page_icon="🚛", layout="wide")
 
-# Configuración visual de Seaborn
-sns.set_theme(style="whitegrid")
+# ==============================================================================
+# PANTALLAS
+# ==============================================================================
 
-def render_analytics_dashboard(df_vista):
-    """Genera los 4 gráficos analíticos avanzados basados en el DataFrame filtrado."""
+def mostrar_pantalla_inicio():
+    st.markdown("<h1 style='text-align: center;'>IA Delivery System</h1>", unsafe_allow_html=True)
+    st.markdown("<h3 style='text-align: center; color: gray;'>Configuración de Datos de Entrada</h3>", unsafe_allow_html=True)
+    st.write("---")
     
-    if len(df_vista) == 0:
-        st.warning("⚠️ No hay datos para mostrar con los filtros actuales.")
-        return
-
-    st.markdown("### 🔬 Analítica Avanzada (Dinámica)")
+    col1, col2 = st.columns(2)
     
-    # 1. Preparar datos numéricos
-    numeric_df = df_vista.select_dtypes(include=['int64', 'float64', 'int32', 'float32'])
+    with col1:
+        st.info("**Conexión Empresarial**")
+        st.write("Conectar directamente al servidor SQL Server configurado.")
+        if st.button("Conectar a BBDD", use_container_width=True, type="primary"):
+            st.session_state['modo_carga'] = 'sql'
+            st.session_state['archivos_subidos'] = None
+            st.session_state['page'] = 'loading'
+            st.rerun()
+
+    with col2:
+        st.warning("**Carga Manual (Testing)**")
+        st.write("Sube tus propios CSVs para simular nuevos escenarios.")
+        
+        with st.expander("Subir Archivos CSV", expanded=True):
+            uploaded_files = {}
+            required = ['Pedidos', 'LineasPedido', 'Productos', 'Clientes', 'Destinos']
+            all_present = True
+            
+            for name in required:
+                f = st.file_uploader(f"{name}.csv", type=['csv'], key=name)
+                if f: uploaded_files[name] = f
+                else: all_present = False
+            
+            # --- CAMBIO AQUÍ: Ahora pedimos Provincias (Nombres) ---
+            f_prov = st.file_uploader("Provincias.csv", type=['csv'], key='prov')
+            if f_prov: uploaded_files['Provincias'] = f_prov
+            
+            if st.button("Procesar Archivos", disabled=not all_present, use_container_width=True):
+                st.session_state['modo_carga'] = 'manual_upload'
+                st.session_state['archivos_subidos'] = uploaded_files
+                st.session_state['page'] = 'loading'
+                st.rerun()
+
+def mostrar_pantalla_carga():
+    st.empty()
+    st.markdown("<br><br><br>", unsafe_allow_html=True)
+    st.markdown("<h2 style='text-align: center;'>Procesando Datos...</h2>", unsafe_allow_html=True)
+    bar = st.progress(0); status = st.empty()
     
-    if numeric_df.empty:
-        st.error("No hay suficientes datos numéricos para generar correlaciones.")
-        return
-
-    correlation_matrix = numeric_df.corr()
-
-    # 2. Crear figura (2x2)
-    fig, axes = plt.subplots(2, 2, figsize=(18, 14))
+    status.text("Analizando archivos..."); time.sleep(0.5); bar.progress(10)
     
-    # -- A: Heatmap --
-    ax1 = axes[0, 0]
-    sns.heatmap(correlation_matrix, annot=True, fmt='.2f', cmap="coolwarm", center=0, ax=ax1)
-    ax1.set_title('Matriz de Correlación', fontweight='bold')
+    try:
+        res = LogisticsController.inicializar_sistema(
+            st.session_state.get('modo_carga'),
+            st.session_state.get('archivos_subidos')
+        )
+        
+        if res['status'] == 'error':
+            st.error(res['msg'])
+            if st.button("Volver"): st.session_state['page'] = 'inicio'; st.rerun()
+            st.stop()
+            
+        bar.progress(100); status.text("¡Completado!")
+        st.session_state['app_state'] = res
+        st.session_state['fleet_config_ui'] = res['fleet_used']
+        st.session_state['page'] = 'dashboard'
+        st.rerun()
+        
+    except Exception as e:
+        st.error(f"Error crítico: {e}")
+        st.stop()
+
+def mostrar_dashboard():
+    # HEADER
+    c1, c2 = st.columns([1, 10])
+    c2.title("Panel de Control Logístico")
+    c2.caption(f"Fecha: {SIMULATION_START_DATE} | Modo: {st.session_state.get('modo_carga', 'UNK').upper()}")
+
+    state = st.session_state['app_state']
     
-    # -- B: Top Correlaciones --
-    ax2 = axes[0, 1]
-    corr_pairs = correlation_matrix.unstack()
-    corr_pairs = corr_pairs[corr_pairs != 1.0] # Quitar diagonal
-    top_corr = corr_pairs.abs().sort_values(ascending=False).drop_duplicates().head(10)
+    # SIDEBAR
+    with st.sidebar:
+        st.header("Flota")
+        if st.button("Reiniciar", use_container_width=True):
+            for k in list(st.session_state.keys()): del st.session_state[k]
+            st.session_state['page'] = 'inicio'; st.rerun()
+        st.divider()
+        
+        current = st.session_state.get('fleet_config_ui', {})
+        new_input = {}
+        for vid, specs in FLEET_CONFIG.items():
+            new_input[vid] = st.number_input(f"{specs['nombre']}", value=int(current.get(vid, 0)), min_value=0)
+            
+        if st.button("Recalcular", type="primary", use_container_width=True):
+            res = LogisticsController.recalcular_con_flota_manual(new_input)
+            st.session_state['app_state'] = res
+            st.session_state['fleet_config_ui'] = new_input
+            st.rerun()
+
+    render_metrics(state.get('clustering', {}))
     
-    if not top_corr.empty:
-        valores_reales = corr_pairs[top_corr.index]
-        colors = ['green' if x > 0 else 'red' for x in valores_reales]
-        top_corr.plot(kind='barh', ax=ax2, color=colors, alpha=0.7)
-        ax2.set_title('Top Correlaciones Significativas', fontweight='bold')
-    else:
-        ax2.text(0.5, 0.5, "Datos insuficientes para correlaciones", ha='center')
+    tab1, tab2, tab3 = st.tabs(["Mapa", "Datos", "Auditoría"])
 
-    # -- C: Histograma Distancia --
-    ax3 = axes[1, 0]
-    if 'Distancia_Km' in df_vista.columns and not df_vista['Distancia_Km'].isnull().all():
-        ax3.hist(df_vista['Distancia_Km'].dropna(), bins=20, color='skyblue', edgecolor='black')
-        ax3.set_title('Distribución de Distancias', fontweight='bold')
-    
-    # -- D: Evolución Temporal --
-    ax4 = axes[1, 1]
-    if 'FechaPedido' in df_vista.columns:
-        fechas = pd.to_datetime(df_vista['FechaPedido'])
-        orders_by_date = df_vista.groupby(fechas.dt.date).size()
-        ax4.plot(orders_by_date.index, orders_by_date.values, marker='o', color='purple')
-        ax4.set_title('Pedidos por Fecha', fontweight='bold')
-        ax4.tick_params(axis='x', rotation=45)
+    with tab1:
+        if state.get('rutas'):
+            mapa = create_interactive_map(state['rutas'])
+            st_folium(mapa, width=None, height=600, returned_objects=[])
+        else: st.warning("Sin rutas.")
 
-    plt.tight_layout()
-    st.pyplot(fig)
+    with tab2:
+        c1, c2 = st.columns(2)
+        with c1:
+            st.subheader("Cargas")
+            rd = state.get('clustering', {}).get('details', [])
+            if isinstance(rd, dict): rd = rd.get('user_routes', [])
+            if rd: st.dataframe(pd.DataFrame(rd)[['vehiculo', 'peso', 'coste']], use_container_width=True, hide_index=True)
+        with c2:
+            st.subheader("Descartes")
+            di = state.get('clustering', {}).get('discarded_df')
+            if di is not None: st.dataframe(di[['PedidoID', 'nombre_completo']], use_container_width=True, hide_index=True)
 
+    with tab3:
+        st.header("Auditoría")
+        rutas = state.get('rutas', [])
+        if rutas:
+            st.subheader("Zonas (Clustering)")
+            fig_c = AuditPlotter.plot_clustering_zones(rutas)
+            if fig_c: st.plotly_chart(fig_c, use_container_width=True)
+            st.divider()
+            st.subheader("Animación (Routing)")
+            fig_r = AuditPlotter.plot_routing_animation(rutas)
+            if fig_r: st.plotly_chart(fig_r, use_container_width=True)
+        else: st.info("Calcula rutas primero.")
 
-def streamlit_interface():
-    st.set_page_config(page_title="Dashboard SQL Server", layout="wide")
-    st.title("📊 Dashboard Integrado (SQL + Analytics)")
+def render_metrics(res):
+    mets = res.get('metrics', {})
+    acc = res.get('accepted_df', [])
+    c = mets.get('cost', mets.get('user_cost', 0))
+    k1, k2, k3 = st.columns(3)
+    k1.metric("Coste", f"{c:,.2f} €")
+    k2.metric("Pedidos", len(acc) if acc is not None else 0)
+    k3.metric("Eficiencia", "Alta" if c < 2500 else "Media")
 
-    # --- 1. CARGA DE DATOS ---
-    with st.spinner("Cargando dataset..."):
-        # Cargar y limpiar tablas crudas
-        # Cambiar de online a offline
-        #clientes, destinos, lineas, pedidos, productos, provincias = DataLoader.load_and_clean_data()
-        clientes, destinos, lineas, pedidos, productos, provincias = DataLoader.get_data_from_csv_files()
-
-        # Construir diccionario para FeatureEngineer
-        dataframes = {
-            'clientes': clientes,
-            'destinos': destinos,
-            'lineas_pedido': lineas,
-            'pedidos': pedidos,
-            'productos': productos,
-            'provincias': provincias
-        }
-
-        # Generar dataset maestro de features
-        try:
-            df_maestro = FeatureEngineer.generar_dataset_maestro(dataframes)
-        except Exception as e:
-            st.error(f"Error generando dataset maestro: {e}")
-            logger.exception("Error en FeatureEngineer.generar_dataset_maestro")
-            return
-
-        # Mostrar y también imprimir en consola (terminal)
-        st.success("✅ Dataset maestro de features cargado")
-        st.subheader("Dataset Maestro (Features)")
-        st.dataframe(df_maestro)
-        # Imprimir un resumen en la consola donde corre Streamlit
-        logger.info("Dataset maestro shape: %s", df_maestro.shape)
-        print(df_maestro.head().to_string())
-
-
-
+def main():
+    if 'page' not in st.session_state: st.session_state['page'] = 'inicio'
+    if st.session_state['page'] == 'inicio': mostrar_pantalla_inicio()
+    elif st.session_state['page'] == 'loading': mostrar_pantalla_carga()
+    elif st.session_state['page'] == 'dashboard': mostrar_dashboard()
 
 if __name__ == "__main__":
-    streamlit_interface()
+    main()
