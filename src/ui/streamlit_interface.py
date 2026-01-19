@@ -14,13 +14,21 @@ from src.config.fleet_config import FLEET_CONFIG, SIMULATION_START_DATE
 from src.utils.map_renderer import create_interactive_map
 from src.utils.plot_renderer import AuditPlotter
 
-st.set_page_config(page_title="IA Delivery Dashboard", page_icon="🚛", layout="wide")
+st.set_page_config(page_title="IA Delivery Dashboard", layout="wide")
+LOGO_PATH = "assets/IADELIVERYSL_LOGO.png"
 
 # ==============================================================================
 # PANTALLAS
 # ==============================================================================
 
 def mostrar_pantalla_inicio():
+    col_L, col_C, col_R = st.columns([1, 1, 1])
+    with col_C:
+        if os.path.exists(LOGO_PATH):
+            st.image(LOGO_PATH, use_container_width=True)
+        else:
+            st.warning("⚠️ Logo no encontrado en 'assets/data_visual.png'")
+
     st.markdown("<h1 style='text-align: center;'>IA Delivery System</h1>", unsafe_allow_html=True)
     st.markdown("<h3 style='text-align: center; color: gray;'>Configuración de Datos de Entrada</h3>", unsafe_allow_html=True)
     st.write("---")
@@ -50,11 +58,10 @@ def mostrar_pantalla_inicio():
                 if f: uploaded_files[name] = f
                 else: all_present = False
             
-            # --- CAMBIO AQUÍ: Ahora pedimos Provincias (Nombres) ---
             f_prov = st.file_uploader("Provincias.csv", type=['csv'], key='prov')
             if f_prov: uploaded_files['Provincias'] = f_prov
             
-            if st.button("Procesar Archivos", disabled=not all_present, use_container_width=True):
+            if st.button("🚀 Procesar Archivos", disabled=not all_present, use_container_width=True):
                 st.session_state['modo_carga'] = 'manual_upload'
                 st.session_state['archivos_subidos'] = uploaded_files
                 st.session_state['page'] = 'loading'
@@ -63,6 +70,10 @@ def mostrar_pantalla_inicio():
 def mostrar_pantalla_carga():
     st.empty()
     st.markdown("<br><br><br>", unsafe_allow_html=True)
+    c1, c2, c3 = st.columns([2,1,2])
+    with c2:
+        if os.path.exists(LOGO_PATH): st.image(LOGO_PATH, width=100)
+        
     st.markdown("<h2 style='text-align: center;'>Procesando Datos...</h2>", unsafe_allow_html=True)
     bar = st.progress(0); status = st.empty()
     
@@ -90,17 +101,23 @@ def mostrar_pantalla_carga():
         st.stop()
 
 def mostrar_dashboard():
-    # HEADER
-    c1, c2 = st.columns([1, 10])
-    c2.title("Panel de Control Logístico")
-    c2.caption(f"Fecha: {SIMULATION_START_DATE} | Modo: {st.session_state.get('modo_carga', 'UNK').upper()}")
+    c_logo, c_title = st.columns([1, 8])
+    with c_logo:
+        if os.path.exists(LOGO_PATH):
+            st.image(LOGO_PATH, use_container_width=True)
+        else:
+            st.write("Logo no encontrado")
+            
+    with c_title:
+        st.title("Panel de Control Logístico")
+        st.caption(f"Fecha Simulación: {SIMULATION_START_DATE} | 🌐 Modo: {st.session_state.get('modo_carga', 'UNK').upper()}")
 
     state = st.session_state['app_state']
     
     # SIDEBAR
     with st.sidebar:
         st.header("Flota")
-        if st.button("Reiniciar", use_container_width=True):
+        if st.button("Inicio / Reset", use_container_width=True):
             for k in list(st.session_state.keys()): del st.session_state[k]
             st.session_state['page'] = 'inicio'; st.rerun()
         st.divider()
@@ -111,20 +128,21 @@ def mostrar_dashboard():
             new_input[vid] = st.number_input(f"{specs['nombre']}", value=int(current.get(vid, 0)), min_value=0)
             
         if st.button("Recalcular", type="primary", use_container_width=True):
-            res = LogisticsController.recalcular_con_flota_manual(new_input)
-            st.session_state['app_state'] = res
-            st.session_state['fleet_config_ui'] = new_input
-            st.rerun()
+            with st.spinner("Recalculando rutas..."):
+                res = LogisticsController.recalcular_con_flota_manual(new_input)
+                st.session_state['app_state'] = res
+                st.session_state['fleet_config_ui'] = new_input
+                st.rerun()
 
     render_metrics(state.get('clustering', {}))
     
-    tab1, tab2, tab3 = st.tabs(["Mapa", "Datos", "Auditoría"])
+    tab1, tab2, tab3 = st.tabs(["Mapa Operativo", "Datos Detallados", "Auditoría IA"])
 
     with tab1:
         if state.get('rutas'):
             mapa = create_interactive_map(state['rutas'])
             st_folium(mapa, width=None, height=600, returned_objects=[])
-        else: st.warning("Sin rutas.")
+        else: st.warning("No hay rutas generadas.")
 
     with tab2:
         c1, c2 = st.columns(2)
@@ -142,11 +160,11 @@ def mostrar_dashboard():
         st.header("Auditoría")
         rutas = state.get('rutas', [])
         if rutas:
-            st.subheader("Zonas (Clustering)")
+            st.subheader("1. Zonas (Clustering)")
             fig_c = AuditPlotter.plot_clustering_zones(rutas)
             if fig_c: st.plotly_chart(fig_c, use_container_width=True)
             st.divider()
-            st.subheader("Animación (Routing)")
+            st.subheader("2. Animación (Routing)")
             fig_r = AuditPlotter.plot_routing_animation(rutas)
             if fig_r: st.plotly_chart(fig_r, use_container_width=True)
         else: st.info("Calcula rutas primero.")
@@ -156,9 +174,9 @@ def render_metrics(res):
     acc = res.get('accepted_df', [])
     c = mets.get('cost', mets.get('user_cost', 0))
     k1, k2, k3 = st.columns(3)
-    k1.metric("Coste", f"{c:,.2f} €")
-    k2.metric("Pedidos", len(acc) if acc is not None else 0)
-    k3.metric("Eficiencia", "Alta" if c < 2500 else "Media")
+    k1.metric("Coste Operativo", f"{c:,.2f} €")
+    k2.metric("Pedidos Entregados", len(acc) if acc is not None else 0)
+    k3.metric("Eficiencia", "Alta" if c < 2500 else "Estándar")
 
 def main():
     if 'page' not in st.session_state: st.session_state['page'] = 'inicio'
