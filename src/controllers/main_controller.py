@@ -1,7 +1,6 @@
 import pandas as pd
 import sys
 import os
-from tqdm import tqdm
 
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..')))
 
@@ -23,7 +22,7 @@ class LogisticsController:
         4. Routing Automático
         """
         print("\n" + "="*50)
-        print("🚀 INICIANDO SISTEMA DE LOGÍSTICA")
+        print("INICIANDO SISTEMA DE LOGÍSTICA")
         print("="*50)
         
         # 1. CARGA DE DATOS
@@ -57,7 +56,7 @@ class LogisticsController:
         res_clustering = ClusteringRunner.run_automatic_optimal_solution(df_maestro)
         
         # 4. ROUTING AUTOMÁTICO
-        print("\n📍 Generando Rutas GPS...")
+        print("\nGenerando Rutas GPS...")
         rutas_gps = LogisticsController._ejecutar_routing(res_clustering["accepted_df"])
         
         return {
@@ -72,7 +71,7 @@ class LogisticsController:
         """
         Se llama desde la interfaz cuando el usuario mueve los sliders de flota.
         """
-        print(f"\n🔧 RECALCULO MANUAL: Flota {user_fleet}")
+        print(f"\nRECALCULO MANUAL: Flota {user_fleet}")
         
         # Cargamos el dataset maestro (ya generado en el inicio)
         path = "data/processed/dataset_master.csv"
@@ -105,8 +104,11 @@ class LogisticsController:
         rutas = []
         clusters = df_clustered['cluster_id'].unique()
         
-        # Barra de progreso
-        for cid in tqdm(clusters, desc="Ruteando clusters"):
+        # Bucle normal sin tqdm para evitar Broken Pipe
+        for i, cid in enumerate(clusters):
+            # Feedback simple en consola (opcional)
+            print(f"   > Procesando Cluster {cid} ({i+1}/{len(clusters)})...")
+            
             subset = df_clustered[df_clustered['cluster_id'] == cid]
             
             # Obtenemos info del vehículo asignado a este cluster
